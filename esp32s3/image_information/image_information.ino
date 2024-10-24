@@ -19,7 +19,7 @@
 // ===========================
 // Enter your WiFi credentials
 // ===========================
-const char *ssid = "SSID:	HUAWEI-B91XW5";
+const char *ssid = "HUAWEI-B91XW5";
 const char *password = "cqdx2504A";
 
 void startCameraServer();

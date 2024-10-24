@@ -33,8 +33,8 @@ Contains the code specific to Seeeduino Xiao development board.
 
 Contains the code specific to ESP32-S3 development board.
 
-- **esp32s3.ino**: The main Arduino script for testing ESP32-S3 features.
-- **camera_pins.h**: Camera pin configuration file shared with video streaming.
+- **image_information**: The Arduino project for testing ESP32-S3 image information.
+- **image_segmentation**: The Arduino project for testing ESP32-S3 image segmentation.
 
 ## Future Plans
 

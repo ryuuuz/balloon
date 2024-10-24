@@ -1,0 +1,6 @@
+# Ignore all files in the .vscode folder
+.vscode/
+
+# Explicitly allow specific files you want to keep in version control
+!.vscode/extensions.json
+!.vscode/launch.json

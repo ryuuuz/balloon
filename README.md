@@ -1,4 +1,4 @@
-# bloom
+# balloon
 
 A project based on Arduino.
 
@@ -35,6 +35,10 @@ Contains the code specific to ESP32-S3 development board.
 
 - **image_information**: The Arduino project for testing ESP32-S3 image information.
 - **image_segmentation**: The Arduino project for testing ESP32-S3 image segmentation.
+
+### scripts
+
+A directory to hold Python scripts related to the project.
 
 ## Future Plans
 

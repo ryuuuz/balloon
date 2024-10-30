@@ -23,6 +23,7 @@ static char recv_buf[512];
 static bool is_exist = false;
 static bool is_join = false;
 static int led = 0;
+unsigned int counter = 0;  // 初始计数器设为0
 
 static int at_send_check_response(char *p_ack, int timeout_ms, char *p_cmd, ...) {
   int ch;
@@ -114,9 +115,9 @@ void setup(void) {
 
   if (at_send_check_response("+AT: OK", 100, "AT\r\n")) {
     is_exist = true;
-    at_send_check_response("+ID: DevEui", 1000, "AT+ID=DevEui,\"33ae0c02186a06f3\"\r\n"); // replace 'xxxxxxxxxxxxx' with your DevEui
+    at_send_check_response("+ID: DevEui", 1000, "AT+ID=DevEui,\"9e3102be9c89dc08\"\r\n"); // replace 'xxxxxxxxxxxxx' with your DevEui
     at_send_check_response("+ID: AppEui", 1000, "AT+ID=AppEui,\"8000000000000007\"\r\n"); // replace 'xxxxxxxxxxxxx' with your AppEui
-    at_send_check_response("+KEY: APPKEY", 1000, "AT+KEY=APPKEY,\"f89a69757a6866815ec6d9e253bb8a1e\"\r\n"); // replace 'xxxxxxxxxxxxx' with your AppKey
+    at_send_check_response("+KEY: APPKEY", 1000, "AT+KEY=APPKEY,\"43f3fc5dd3f0273cbf2cf4023dca96cc\"\r\n"); // replace 'xxxxxxxxxxxxx' with your AppKey
     at_send_check_response("+ID: DevAddr", 1000, "AT+ID=DevAddr\r\n"); 
     at_send_check_response("+ID: AppEui", 1000, "AT+ID\r\n");
     at_send_check_response("+MODE: LWOTAA", 1000, "AT+MODE=LWOTAA\r\n");
@@ -135,7 +136,7 @@ void setup(void) {
     u8x8.print("unfound E5 !");
   }
 
-  dht.begin();
+  // dht.begin();
 
   u8x8.setCursor(0, 2);
   u8x8.setCursor(2, 2);
@@ -150,27 +151,27 @@ void setup(void) {
 }
 
 void loop(void) {
-  float temp = 0;
-  float humi = 0;
+  // float temp = 0;
+  // float humi = 0;
 
-  temp = dht.readTemperature();
-  humi = dht.readHumidity();
+  // temp = dht.readTemperature();
+  // humi = dht.readHumidity();
 
-  Serial.print("Humidity: ");
-  Serial.print(humi);
-  Serial.print(" %\t");
-  Serial.print("Temperature: ");
-  Serial.print(temp);
-  Serial.println(" *C");
+  // Serial.print("Humidity: ");
+  // Serial.print(humi);
+  // Serial.print(" %\t");
+  // Serial.print("Temperature: ");
+  // Serial.print(temp);
+  // Serial.println(" *C");
 
-  u8x8.setCursor(0, 2);
-  u8x8.print("      ");
-  u8x8.setCursor(2, 2);
-  u8x8.print("temp:");
-  u8x8.print(temp);
-  u8x8.setCursor(2, 3);
-  u8x8.print("humi:");
-  u8x8.print(humi);
+  // u8x8.setCursor(0, 2);
+  // u8x8.print("      ");
+  // u8x8.setCursor(2, 2);
+  // u8x8.print("temp:");
+  // u8x8.print(temp);
+  // u8x8.setCursor(2, 3);
+  // u8x8.print("humi:");
+  // u8x8.print(humi);
 
   if (is_exist) {
     int ret = 0;
@@ -186,13 +187,16 @@ void loop(void) {
       }
     } else {
       char cmd[128];
-      sprintf(cmd, "AT+CMSGHEX=\"%04X%04X\"\r\n", (int)(temp * 100), (int)(humi * 100));
+      // sprintf(cmd, "AT+MSGHEX=\"%04X%04X\"\r\n", (int)(temp * 100), (int)(humi * 100));
+      sprintf(cmd, "AT+MSGHEX=\"%08X\"\r\n", counter);
+      counter++;
+      
       ret = at_send_check_response("Done", 5000, cmd);
-      if (ret) {
-        recv_prase(recv_buf);
-      } else {
-        Serial.print("Send failed!\r\n\r\n");
-      }
+      // if (ret) {
+      //   recv_prase(recv_buf);
+      // } else {
+      //   Serial.print("Send failed!\r\n\r\n");
+      // }
       delay(5000);
     }
   } else {

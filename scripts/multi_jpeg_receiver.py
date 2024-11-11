@@ -5,8 +5,6 @@ from PIL import Image
 import io
 import cv2
 import numpy as np
-from matplotlib import pyplot as plt
-
 
 # 列出所有可用的串口设备
 def list_serial_ports():
@@ -14,7 +12,6 @@ def list_serial_ports():
     for i, port in enumerate(ports):
         print(f"{i}: {port.device} - {port.description}")
     return ports
-
 
 # 选择串口
 def select_serial_port():
@@ -29,15 +26,14 @@ def select_serial_port():
         print("Invalid selection.")
         return None
 
-
 # 定义帧标记
 FRAME_START = 0xAA
 FRAME_END = 0x55
 
-
 def receive_image_segments(ser):
     total_segments = None
     current_segment = 0
+    rows, cols = None, None
     jpeg_data_list = []
 
     while True:
@@ -48,14 +44,16 @@ def receive_image_segments(ser):
 
         byte = data[0]
         if byte == FRAME_START:
-            # 读取分段号，总分段数和JPEG大小信息
-            segment_info = ser.read(4)
-            if len(segment_info) < 4:
+            # 读取分段号，总分段数、行数、列数和JPEG大小信息
+            segment_info = ser.read(6)
+            if len(segment_info) < 6:
                 continue
 
             segment_number = segment_info[0]
             total_segments = segment_info[1]
-            jpeg_size = struct.unpack(">H", segment_info[2:4])[0]  # 大端模式读取JPEG大小
+            rows = segment_info[2]  # 解析行数
+            cols = segment_info[3]  # 解析列数
+            jpeg_size = struct.unpack(">H", segment_info[4:6])[0]  # 大端模式读取JPEG大小
 
             # 读取JPEG数据
             jpeg_segment = ser.read(jpeg_size)
@@ -77,22 +75,13 @@ def receive_image_segments(ser):
                 print("All segments received.")
                 break
 
-    return jpeg_data_list, total_segments
+    return jpeg_data_list, rows, cols
 
+def display_image_in_window(jpeg_data_list, rows, cols, border_thickness=1, border_color=(255, 255, 255)):
+    # 计算分割图像的布局
+    grid_size = (rows, cols)
 
-def display_image_in_window(jpeg_data_list, total_segments, border_thickness=1, border_color=(255, 255, 255)):
-    # 计算分割图像的布局 (1x1, 2x2, 3x3)
-    if total_segments == 1:
-        grid_size = (1, 1)
-    elif total_segments == 4:
-        grid_size = (2, 2)
-    elif total_segments == 9:
-        grid_size = (3, 3)
-    else:
-        print("Unsupported number of segments!")
-        return
-
-    # 假设所有图像分段大小相同，我们使用第一个图像的大小来创建画布
+    # 假设所有图像分段大小相同，使用第一个图像的大小来创建画布
     first_image = Image.open(io.BytesIO(jpeg_data_list[0]))
     image_np = np.array(first_image)
     h, w, c = image_np.shape
@@ -123,7 +112,6 @@ def display_image_in_window(jpeg_data_list, total_segments, border_thickness=1, 
     cv2.imshow("Image Grid with Drawn Borders", canvas)
     cv2.waitKey(1)  # 短暂停留以刷新窗口
 
-
 if __name__ == '__main__':
     # serial_port = select_serial_port()
     serial_port = "COM9"
@@ -135,10 +123,10 @@ if __name__ == '__main__':
         # 打开窗口
         while True:
             print("Waiting for image data...")
-            jpeg_data_list, total_segments = receive_image_segments(ser)
+            jpeg_data_list, rows, cols = receive_image_segments(ser)
             if jpeg_data_list:
                 print("Displaying image...")
-                display_image_in_window(jpeg_data_list, total_segments)
+                display_image_in_window(jpeg_data_list, rows, cols)
             else:
                 print("No image data received.")
     else:

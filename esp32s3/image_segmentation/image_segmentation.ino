@@ -11,19 +11,23 @@
 struct ImageSegmentConfig {
     uint16_t width;
     uint16_t height;
-    uint16_t segment_width;
-    uint16_t segment_height;
+    uint16_t segment_rows;  // 分割的行数
+    uint16_t segment_cols;  // 分割的列数
     uint8_t jpeg_quality;
 };
 
-framesize_t current_frame_size = FRAMESIZE_240X240;
+framesize_t current_frame_size = FRAMESIZE_SVGA;
 
 // 不同信号强度下的配置生成函数
-ImageSegmentConfig getConfigForSignal(int signal_strength, framesize_t frame_size) {
+ImageSegmentConfig getConfigForSignal(int signal_strength, framesize_t frame_size, uint16_t rows, uint16_t cols) {
     uint16_t width, height;
 
     // 根据不同分辨率设置宽度和高度
     switch(frame_size) {
+        case FRAMESIZE_UXGA:  // 1600x1200
+            width = 1600;
+            height = 1200;
+            break;
         case FRAMESIZE_QVGA:  // 320x240
             width = 320;
             height = 240;
@@ -58,21 +62,35 @@ ImageSegmentConfig getConfigForSignal(int signal_strength, framesize_t frame_siz
             break;
     }
 
-    // 根据信号强度动态调整分割配置
-    switch(signal_strength) {
-        case 2:
-            return {width, height, width, height, 10};  // 信号好，发送完整图片
-        case 1:
-            return {width, height, width / 2, height / 2, 15};  // 信号一般，分割成4份
-        default:
-            return {width, height, width / 3, height / 3, 20};  // 信号差，分割成9份
-    }
+    // 计算每个分割块的宽度和高度
+    uint16_t segment_width = width / cols;
+    uint16_t segment_height = height / rows;
+    uint8_t jpeg_quality = 30;  // 默认JPEG质量
+
+    // // 根据信号强度动态调整分割配置
+    // // 图像质量（jpeg_quality) 可以是 0 到 63 之间的数字。数字越小意味着质量越差。
+    // switch(signal_strength) {
+    //     case 2:
+    //         return {width, height, width, height, 32};  // 信号好，发送完整图片
+    //     case 1:
+    //         return {width, height, width / 2, height / 2, 32};  // 信号一般，分割成4份
+    //     default:
+    //         return {width, height, width / 4, height / 4, 32};  // 信号差，分割成16份
+    // }
+
+    return {width, height, rows, cols, jpeg_quality};
 }
 
 // 自定义min函数
 template<typename T>
 T minimum(T a, T b) {
     return (a < b) ? a : b;
+}
+
+// 检查内存使用情况
+void checkMemory() {
+    size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    Serial.printf("Free PSRAM: %u bytes\n", free_psram);
 }
 
 // 图像分割类
@@ -86,7 +104,9 @@ private:
     // 内部函数：创建RGB565缓冲区
     uint8_t* createSegmentBuffer(int start_x, int start_y, int actual_width, int actual_height, size_t* buf_size) {
         *buf_size = actual_width * actual_height * 2; // RGB565 每像素2字节
-        uint8_t* rgb_buf = (uint8_t*)malloc(*buf_size);
+        checkMemory();
+        Serial.printf("Segment buffer size: %d bytes\n", *buf_size);
+        uint8_t* rgb_buf = (uint8_t*)ps_malloc(*buf_size);
         if (!rgb_buf) return NULL;
 
         // 复制分割区域数据
@@ -104,30 +124,29 @@ public:
 
     // 获取分割后的总段数
     int getTotalSegments() {
-        return ((source_width + config.segment_width - 1) / config.segment_width) *
-               ((source_height + config.segment_height - 1) / config.segment_height);
+        return config.segment_rows * config.segment_cols;
     }
 
     // 提取指定位置的图像段并转换为JPEG
     bool getSegment(int segment_index, uint8_t** jpeg_buf, size_t* jpeg_size) {
-        int segments_per_row = (source_width + config.segment_width - 1) / config.segment_width;
-        int row = segment_index / segments_per_row;
-        int col = segment_index % segments_per_row;
+        int row = segment_index / config.segment_cols;
+        int col = segment_index % config.segment_cols;
 
-        // 计算分割位置
-        int start_x = col * config.segment_width;
-        int start_y = row * config.segment_height;
+         // 计算分割位置
+        int start_x = col * (source_width / config.segment_cols);
+        int start_y = row * (source_height / config.segment_rows);
 
         // 使用自定义minimum函数
-        uint16_t actual_width = minimum<uint16_t>(config.segment_width, 
-                                                source_width - (uint16_t)start_x);
-        uint16_t actual_height = minimum<uint16_t>(config.segment_height, 
-                                                 source_height - (uint16_t)start_y);
+        uint16_t actual_width = minimum<uint16_t>(source_width / config.segment_cols, 
+                                                  source_width - (uint16_t)start_x);
+        uint16_t actual_height = minimum<uint16_t>(source_height / config.segment_rows, 
+                                                   source_height - (uint16_t)start_y);
 
         // 创建RGB565缓冲区并复制数据
         size_t rgb_buf_size;
         uint8_t* rgb_buf = createSegmentBuffer(start_x, start_y, actual_width, actual_height, &rgb_buf_size);
         if (!rgb_buf) {
+            Serial.printf("Failed to create segment buffer for segment %d\n", segment_index);
             return false;
         }
 
@@ -166,12 +185,12 @@ void setup() {
     config.pin_sccb_scl = SIOC_GPIO_NUM;
     config.pin_pwdn = PWDN_GPIO_NUM;
     config.pin_reset = RESET_GPIO_NUM;
-    config.xclk_freq_hz = 20000000;
+    config.xclk_freq_hz = 10000000;
     config.frame_size = current_frame_size;
     config.pixel_format = PIXFORMAT_RGB565;
-    config.grab_mode = CAMERA_GRAB_LATEST;
+    config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
     config.fb_location = CAMERA_FB_IN_PSRAM;
-    config.fb_count = 2;
+    config.fb_count = 1;
 
     // 初始化相机
     esp_err_t err = esp_camera_init(&config);
@@ -188,7 +207,9 @@ int getSignalStrength() {
 }
 
 void loop() {
-    // 获取一帧图像
+    //向后台驱动程序返回一个 frame_buffer
+    esp_camera_fb_return(esp_camera_fb_get());
+    //后台程序自动将新的图像数据刷新到 frame_buffer，然后应用层可以获取到 frame_buffer 中的数据
     camera_fb_t *fb = esp_camera_fb_get();
     if (!fb) {
         Serial.println("Camera capture failed");
@@ -201,7 +222,8 @@ void loop() {
     Serial.printf("Signal strength: %d\n", signal);
 
     // 根据信号强度和当前分辨率选择分割配置
-    ImageSegmentConfig current_config = getConfigForSignal(signal, current_frame_size);
+    uint16_t rows = 8, cols = 6; // 示例：定义分割为4行4列
+    ImageSegmentConfig current_config = getConfigForSignal(signal, current_frame_size, rows, cols);
 
     // 创建图像分割器
     ImageSegmenter segmenter((uint8_t*)fb->buf, fb->width, fb->height, current_config);
@@ -216,12 +238,14 @@ void loop() {
         if (segmenter.getSegment(i, &jpeg_buf, &jpeg_size)) {
             // 打印分段信息
             Serial.printf("Segment %d/%d, Size: %d bytes\n", i + 1, total_segments, jpeg_size);
-            Serial1.printf("Segment %d/%d, Size: %d bytes\n", i + 1, total_segments, jpeg_size);
+            Serial1.printf("Segment %d/%d, Rows: %d, Cols: %d, Size: %d bytes\n", i + 1, total_segments, rows, cols, jpeg_size);
 
             // 发送帧头
             Serial1.write(0xAA);  // 帧起始标记
             Serial1.write((uint8_t)(i + 1));  // 分段序号
             Serial1.write((uint8_t)total_segments);  // 总分段数
+            Serial1.write((uint8_t)(rows));  // 行数
+            Serial1.write((uint8_t)(cols));  // 列数
             Serial1.write((uint8_t)(jpeg_size >> 8));  // 数据长度高字节
             Serial1.write((uint8_t)(jpeg_size & 0xFF));  // 数据长度低字节
 

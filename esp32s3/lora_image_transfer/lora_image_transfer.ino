@@ -55,36 +55,12 @@ static int at_send_check_response(char *p_ack, int timeout_ms, char *p_cmd, ...)
 
 static int image_send()
 {
-    static uint16_t count = 0;
     int ret = 0;
-    char data[32];
-    // char cmd[128];
     char cmd[256];
-    char response[32];
 
-    // Check available length with AT+LW=LEN
-    ret = at_send_check_response("OK", 1000, "AT+LW=LEN\r\n", response, sizeof(response));
-    if (ret != 0)
-    {
-        Serial.println("Failed to get available length");
-        return -1;
-    }
-
-    // Parse the available length from response
-    int available_length = atoi(response);
-    Serial.printf("Available length: %d\n", available_length);
-
-    // Ensure available length is sufficient
-    if (available_length < 100)
-    {
-        Serial.println("Not enough available length for transmission");
-        return -1;
-    }
-
-    // 向后台驱动程序返回一个 frame_buffer
-    esp_camera_fb_return(esp_camera_fb_get());
-    // 后台程序自动将新的图像数据刷新到 frame_buffer，然后应用层可以获取到 frame_buffer 中的数据
-    camera_fb_t *fb = esp_camera_fb_get();
+    // Capture image frame buffer
+    esp_camera_fb_return(esp_camera_fb_get()); // Return old frame buffer to driver
+    camera_fb_t *fb = esp_camera_fb_get();     // Get new frame buffer
     if (!fb)
     {
         Serial.println("Camera capture failed");
@@ -104,40 +80,95 @@ static int image_send()
 
     Serial.printf("Image size: %zu\n", jpeg_buf_size);
 
-    // 计算总包数，每包100字节
-    uint16_t total_packets = (jpeg_buf_size + 99) / 100;
+    // Total image size
+    size_t total_size = jpeg_buf_size;
 
-    // 依次发送每个数据包
-    for (uint16_t packet_idx = 0; packet_idx < total_packets; packet_idx++)
+    // Get the maximum packet length available to send
+    int available_length = 0;
+
+    // Continue sending while there is still data to send
+    size_t data_offset = 0; // Data offset to send from jpeg_buf
+    uint16_t packet_idx = 0;
+
+    while (data_offset < total_size)
     {
-        // 包头信息，第一个字节是当前包序号，第二个字节是总包数
-        uint8_t packet[102] = {0};
-        packet[0] = packet_idx;    // 当前包序号
-        packet[1] = total_packets; // 总包数
+        // Get available length with AT+LW=LEN
+        ret = at_send_check_response("OK", 1000, "AT+LW=LEN\r\n");
+        if (ret != 0)
+        {
+            Serial.println("Failed to get available length");
+            return -1;
+        }
 
-        // 拷贝JPEG数据到包中，偏移为包序号乘以100字节
-        size_t data_offset = packet_idx * 100;
-        size_t bytes_to_copy = std::min(static_cast<size_t>(100), jpeg_buf_size - data_offset);
+        // Print and extract available length from response
+        Serial.printf("Response: %s\n", recv_buf); // Directly use recv_buf
+
+        char *comma_pos = strchr(recv_buf, ','); // Find the comma in response
+        if (comma_pos != NULL)
+        {
+            // Parse the number after the comma (length)
+            available_length = atoi(comma_pos + 1); // +1 to skip the comma
+            Serial.printf("Available length: %d\n", available_length);
+
+            // Ensure available_length is valid and within a reasonable range
+            if (available_length <= 0 || available_length > 100)
+            {
+                Serial.println("Invalid available length");
+                return -1;
+            }
+        }
+        else
+        {
+            Serial.println("Failed to parse available length");
+            return -1;
+        }
+
+        // Subtract 2 bytes for the header (packet[0] and packet[1])
+        size_t data_to_send = available_length - 2; 
+
+        // Calculate the bytes to copy based on available length and remaining data
+        size_t bytes_to_copy = std::min(static_cast<size_t>(data_to_send), total_size - data_offset);
+
+        // Prepare the packet (header + data)
+        uint8_t packet[1024] = {0};  // Max size 1024 (1 byte header + 100 bytes data)
+        packet[0] = packet_idx;      // Current packet number
+
+        // Determine if it's the last packet
+        if (data_offset + bytes_to_copy >= total_size)
+        {
+            packet[1] = 1; // Last packet
+        }
+        else
+        {
+            packet[1] = 0; // Not the last packet
+        }
+
+        // Copy JPEG data to the packet, considering current data offset
         memcpy(&packet[2], jpeg_buf + data_offset, bytes_to_copy);
 
-        // 发送当前包
+        // Build command string for AT+MSGHEX
         sprintf(cmd, "AT+MSGHEX=\"");
-        for (size_t i = 0; i < bytes_to_copy + 2; i++)
+        for (size_t i = 0; i < bytes_to_copy + 2; i++) // +2 for the header
         {
             sprintf(cmd + strlen(cmd), "%02X", packet[i]);
         }
         strcat(cmd, "\"\r\n");
 
-        Serial.printf("Sending packet %d/%d, size: %d\n", packet_idx + 1, total_packets, bytes_to_copy);
+        // Send the current packet
+        Serial.printf("Sending packet %d/%d, size: %d\n", packet_idx + 1, (total_size + available_length - 1) / available_length, bytes_to_copy);
         ret = at_send_check_response("Done", 5000, cmd);
         if (ret != 0)
         {
             Serial.printf("Failed to send packet %d\n", packet_idx);
             break;
         }
+
+        // Move the data offset to the next block of data
+        data_offset += bytes_to_copy;
+        packet_idx++;
     }
 
-    // 释放JPEG buffer和帧缓冲
+    // Release JPEG buffer and frame buffer
     free(jpeg_buf);
     esp_camera_fb_return(fb);
 

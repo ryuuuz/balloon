@@ -7,3 +7,6 @@
 
 # Ignore all files in the .idea folder
 .idea/
+
+# Ignore all files in the images folder
+scripts/images

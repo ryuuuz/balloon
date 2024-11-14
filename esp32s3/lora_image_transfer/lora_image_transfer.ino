@@ -111,7 +111,7 @@ static int image_send()
             Serial.printf("Available length: %d\n", available_length);
 
             // Ensure available_length is valid and within a reasonable range
-            if (available_length <= 0 || available_length > 100)
+            if (available_length <= 0)
             {
                 Serial.println("Invalid available length");
                 return -1;
@@ -157,7 +157,7 @@ static int image_send()
         // Send the current packet
         Serial.printf("Sending packet %d/%d, size: %d\n", packet_idx + 1, (total_size + available_length - 1) / available_length, bytes_to_copy);
         ret = at_send_check_response("Done", 5000, cmd);
-        if (ret != 0)
+        if (ret != 1)
         {
             Serial.printf("Failed to send packet %d\n", packet_idx);
             break;
@@ -198,9 +198,11 @@ void setup()
         at_send_check_response("+ID: AppEui", 1000, "AT+ID\r\n");
         at_send_check_response("+MODE: LWOTAA", 1000, "AT+MODE=LWOTAA\r\n");
         at_send_check_response("+DR: US915", 1000, "AT+DR=US915\r\n"); // Change FREQ as per your location
+        at_send_check_response("+DR: US915", 1000, "AT+DR=dr3\r\n"); // Change FREQ as per your location
         at_send_check_response("+CH: NUM", 1000, "AT+CH=NUM,0-7\r\n");
         at_send_check_response("+CLASS: C", 1000, "AT+CLASS=A\r\n");
         at_send_check_response("+PORT: 8", 1000, "AT+PORT=8\r\n");
+        at_send_check_response("+ADR: ON", 1000, "AT+ADR=ON\r\n");
         delay(200);
         u8x8.setCursor(5, 0);
         u8x8.print("LoRaWAN");
@@ -272,7 +274,7 @@ void loop()
         else
         {
             image_send();
-            delay(1000 * 60); // 1分钟发送一次
+            delay(1000 * 10); // 10秒后获取下一帧
         }
     }
     else

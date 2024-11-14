@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Image Gallery</title>
+</head>
+<body>
+    <h1>Latest Images</h1>
+    <div>
+        {% for image in image_files %}
+            <div>
+                <h3>{{ image }}</h3>
+                <img src="{{ url_for('show_image', image_id=image.split('.')[0].split('_')[1]) }}" alt="Image" style="width: auto; height: auto;"/>
+            </div>
+        {% endfor %}
+    </div>
+</body>
+</html>

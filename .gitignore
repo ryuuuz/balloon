@@ -8,5 +8,11 @@
 # Ignore all files in the .idea folder
 .idea/
 
+# Ignore all files about the J-Link software
+J-Flash/
+
+# Ignore all compiled files
+output/
+
 # Ignore all files in the images folder
 scripts/images

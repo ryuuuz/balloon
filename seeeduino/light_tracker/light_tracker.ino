@@ -15,10 +15,59 @@
 #include "SparkFun_u-blox_GNSS_v3.h" //http://librarymanager/All#SparkFun_u-blox_GNSS_v3
 SFE_UBLOX_GNSS myGNSS;
 
+#include <basicmac.h>
+#include <hal/hal.h>
+
+#define _REGCODE_US915 3
+
+// SX1262 has the following connections:
+#define nssPin 8
+#define rstPin 9
+#define dio1Pin 3
+#define busyPin 2
+
+#define txPin 10
+#define rxPin 12
+
+// This EUI must be in little-endian format, so least-significant-byte (lsb)
+// first. When copying an EUI from Helium Console or ttnctl output, this means to reverse the bytes.
+
+static const u1_t PROGMEM DEVEUI[8] = {0x6C, 0x15, 0xB4, 0x03, 0x22, 0xF6, 0xEE, 0x06}; // helium or ttn
+
+// This EUI must be in little-endian format, so least-significant-byte (lsb)
+// first. When copying an EUI from Helium Console or ttnctl output, this means to reverse the bytes.
+
+static const u1_t PROGMEM APPEUI[8] = {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07}; // helium or ttn
+
+// This key should be in big endian format (or, since it is not really a
+// number but a block of memory, endianness does not really apply). In practice, a key taken from Helium Console or ttnctl can be copied as-is.
+
+static const u1_t PROGMEM APPKEY[16] = {0x76, 0xE2, 0x0D, 0x5D, 0xED, 0x02, 0x06, 0xF1, 0xE2, 0x7D, 0xB5, 0xE4, 0x9E, 0xA1, 0xAB, 0xB9}; // helium or ttn
+
+boolean OTAAJoinStatus = false; // do not change this.
+int channelNoFor2ndSubBand = 8; // do not change this. Used for US915 and AU915 / TTN and Helium
+uint32_t last_packet = 0;       // do not change this. Timestamp of last packet sent.
+
+// pinmap for SX1262 LoRa module
+const lmic_pinmap lmic_pins = {
+    .nss = nssPin,
+    .tx = LMIC_UNUSED_PIN,
+    .rx = LMIC_UNUSED_PIN,
+    .rst = rstPin,
+    .dio = {/* DIO0 */ LMIC_UNUSED_PIN, /* DIO1 */ dio1Pin, /* DIO2 */ LMIC_UNUSED_PIN},
+    .busy = busyPin,
+    .tcxo = LMIC_CONTROLLED_BY_DIO3,
+};
+
+//********************************* Misc Settings ******************************
+int txCount = 1;
+float voltage = 0;
+boolean packetQueued = false;
+
 #include "variant.h"
 
 #undef SERIAL_PORT_MONITOR
-#define SERIAL_PORT_MONITOR SerialUSB
+#define SERIAL_PORT_MONITOR Serial
 
 #define USB_MANUFACTURER "Your Company"
 #define USB_PRODUCT "ATSAMD21 CDC Device"
@@ -200,15 +249,83 @@ void setup()
     myGNSS.setI2COutput(COM_TYPE_UBX); // Set the I2C port to output UBX only (turn off NMEA noise)
 
     // // 初始化USB串口
-    // SerialUSB.begin(115200);
-    // while (!SerialUSB) {
+    // Serial.begin(115200);
+    // while (!Serial) {
     //   // 等待串口连接
     // }
-    // SerialUSB.println("USB CDC Ready!");
+    // Serial.println("USB CDC Ready!");
 }
+
+void fetchBMP581Data();
+void fetchGNSSData();
 
 // the loop function runs over and over again forever
 void loop()
+{
+    // fetchBMP581Data();
+    // fetchGNSSData();
+
+    os_runstep(); // Process the LMIC event queue
+
+    if (!OTAAJoinStatus)
+    {
+        Serial.println(F("Region US915"));
+
+        // LMIC init
+        os_init(nullptr);
+        LMIC_reset();
+
+        // Start OTAA join
+        LMIC_startJoining();
+        Serial.println(F("OTAA Joining..."));
+
+        LMIC_setDrTxpow(0, KEEP_TXPOWADJ);
+        LMIC_selectChannel(7);
+
+        LMIC_setAdrMode(false);
+        // LMIC_setLinkCheckMode(0);
+
+        while ((LMIC.opmode & (OP_JOINING)))
+        {
+            os_runstep();
+        }
+
+        SerialUSB.println(F("LoRaWAN OTAA Login success..."));
+        OTAAJoinStatus = true;
+    }
+
+    LMIC_setDrTxpow(1, KEEP_TXPOWADJ);
+
+    LMIC_selectChannel(channelNoFor2ndSubBand);
+
+    ++channelNoFor2ndSubBand;
+    if (channelNoFor2ndSubBand > 7)
+    {
+        channelNoFor2ndSubBand = 0;
+    }
+    Serial.print(F("Channel: "));
+    Serial.println(channelNoFor2ndSubBand);
+
+    LMIC_setAdrMode(false);
+    LMIC_setLinkCheckMode(0);
+
+    if ((LMIC.opmode & OP_TXRXPEND) != 0)
+    {
+        Serial.println(F("Transmission pending, cannot queue new data"));
+    }
+    else
+    {
+        LMIC_setTxData2(8, (uint8_t *)"Hello, world!", 13, 0);
+        Serial.println(F("Packet queued"));
+    }
+
+    digitalWrite(LED_BUILTIN, HIGH); // turn the LED on (HIGH is the voltage level)
+    delay(3000);                     // wait for a second
+    digitalWrite(LED_BUILTIN, LOW);  // turn the LED off by making the voltage LOW
+    delay(3000);                     // wait for a second
+}
+
+void fetchBMP581Data()
 {
     // Get measurements from the sensor
     bmp5_sensor_data data = {0, 0};
@@ -230,7 +347,10 @@ void loop()
         Serial.print("Error getting data from sensor! Error code: ");
         Serial.println(err);
     }
+}
 
+void fetchGNSSData()
+{
     // Request (poll) the position, velocity and time (PVT) information.
     // The module only responds when a new position is available. Default is once per second.
     // getPVT() returns true when new data is received.
@@ -268,9 +388,101 @@ void loop()
 
     // myGNSS.checkUblox();     // Check for the arrival of new data and process it.
     // myGNSS.checkCallbacks(); // Check if any callbacks are waiting to be processed.
+}
 
-    digitalWrite(LED_BUILTIN, HIGH); // turn the LED on (HIGH is the voltage level)
-    delay(1000);                     // wait for a second
-    digitalWrite(LED_BUILTIN, LOW);  // turn the LED off by making the voltage LOW
-    delay(1000);                     // wait for a second
+u1_t os_getRegion(void) { return _REGCODE_US915; }
+void os_getJoinEui(u1_t *buf) { memcpy_P(buf, APPEUI, 8); }
+void os_getDevEui(u1_t *buf) { memcpy_P(buf, DEVEUI, 8); }
+void os_getNwkKey(u1_t *buf) { memcpy_P(buf, APPKEY, 16); }
+
+void onLmicEvent(ev_t ev)
+{
+    Serial.print(os_getTime());
+    Serial.print(": ");
+    switch (ev)
+    {
+    case EV_SCAN_TIMEOUT:
+        Serial.println(F("EV_SCAN_TIMEOUT"));
+        break;
+    case EV_BEACON_FOUND:
+        Serial.println(F("EV_BEACON_FOUND"));
+        break;
+    case EV_BEACON_MISSED:
+        Serial.println(F("EV_BEACON_MISSED"));
+        break;
+    case EV_BEACON_TRACKED:
+        Serial.println(F("EV_BEACON_TRACKED"));
+        break;
+    case EV_JOINING:
+        Serial.println(F("EV_JOINING"));
+        break;
+    case EV_JOINED:
+        Serial.println(F("EV_JOINED"));
+
+        // Disable link check validation (automatically enabled
+        // during join, but not supported by TTN at this time).
+        LMIC_setLinkCheckMode(0);
+        break;
+    case EV_RFU1:
+        Serial.println(F("EV_RFU1"));
+        break;
+    case EV_JOIN_FAILED:
+        Serial.println(F("EV_JOIN_FAILED"));
+        break;
+    case EV_REJOIN_FAILED:
+        Serial.println(F("EV_REJOIN_FAILED"));
+        break;
+        break;
+    case EV_TXCOMPLETE:
+        Serial.println(F("EV_TXCOMPLETE (includes waiting for RX windows)"));
+        packetQueued = false;
+        if (LMIC.txrxFlags & TXRX_ACK)
+            Serial.println(F("Received ack"));
+        if (LMIC.dataLen)
+        {
+            Serial.print(F("Received "));
+            Serial.print(LMIC.dataLen);
+            Serial.println(F(" bytes of payload"));
+        }
+        break;
+    case EV_LOST_TSYNC:
+        Serial.println(F("EV_LOST_TSYNC"));
+        break;
+    case EV_RESET:
+        Serial.println(F("EV_RESET"));
+        break;
+    case EV_RXCOMPLETE:
+        // data received in ping slot
+        Serial.println(F("EV_RXCOMPLETE"));
+        break;
+    case EV_LINK_DEAD:
+        Serial.println(F("EV_LINK_DEAD"));
+        break;
+    case EV_LINK_ALIVE:
+        Serial.println(F("EV_LINK_ALIVE"));
+        break;
+    case EV_SCAN_FOUND:
+        Serial.println(F("EV_SCAN_FOUND"));
+        break;
+    case EV_TXSTART:
+        Serial.println(F("EV_TXSTART"));
+        break;
+    case EV_TXDONE:
+        Serial.println(F("EV_TXDONE"));
+        break;
+    case EV_DATARATE:
+        Serial.println(F("EV_DATARATE"));
+        break;
+    case EV_START_SCAN:
+        Serial.println(F("EV_START_SCAN"));
+        break;
+    case EV_ADR_BACKOFF:
+        Serial.println(F("EV_ADR_BACKOFF"));
+        break;
+
+    default:
+        Serial.print(F("Unknown event: "));
+        Serial.println(ev);
+        break;
+    }
 }

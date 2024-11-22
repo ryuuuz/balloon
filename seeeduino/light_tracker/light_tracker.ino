@@ -64,6 +64,8 @@ int txCount = 1;
 float voltage = 0;
 boolean packetQueued = false;
 
+#define SETB_PIN 43
+
 #include "variant.h"
 
 #undef SERIAL_PORT_MONITOR
@@ -72,7 +74,8 @@ boolean packetQueued = false;
 #define USB_MANUFACTURER "Your Company"
 #define USB_PRODUCT "ATSAMD21 CDC Device"
 
-#define Serial Serial1
+// #define Serial Serial1
+// #define USE_SERIAL
 
 // 自定义时钟初始化函数
 void initClock()
@@ -172,9 +175,13 @@ void setup()
     // 调用自定义时钟初始化函数
     initClock();
 
-    // initialize digital pin LED_BUILTIN as an output.
     Serial.begin(115200, SERIAL_8N1);
+    Serial.println("Serial Ready!");
+
+    #ifndef USE_SERIAL
+    Serial1.begin(9600, SERIAL_8N1);
     Serial.println("Serial1 Ready!");
+    #endif
 
     // Initialize the LED pin
     pinMode(LED_BUILTIN, OUTPUT);
@@ -227,10 +234,10 @@ void setup()
     // initGNSS();
 
     // Example: Initialize and join with LMIC
-    initAndJoinWithLMIC();
+    // initAndJoinWithLMIC();
 
     // Example: Initialize and join with AT commands
-    // initAndJoinWithAT();
+    initAndJoinWithAT();
 
     // // 初始化USB串口
     // Serial.begin(115200);
@@ -249,8 +256,10 @@ void loop()
     // fetchBMP581Data();
     // fetchGNSSData();
 
-    processLMICEvents(); // Process the LMIC event queue
-    sendDataWithLMIC("Hello, LMIC!");
+    // processLMICEvents(); // Process the LMIC event queue
+    // sendDataWithLMIC("Hello, LMIC!");
+
+    // sendDataWithAT("Hello, AT!");
 
     digitalWrite(LED_BUILTIN, HIGH); // turn the LED on (HIGH is the voltage level)
     delay(3000);                     // wait for a second
@@ -485,6 +494,65 @@ void initAndJoinWithLMIC()
     Serial.println(F("LoRaWAN OTAA Join successful!"));
 }
 
+void initAndJoinWithAT() {
+    Serial.println(F("Initializing E78-915LN22S (AT Commands)..."));
+
+    // LOW for low power mode, HIGH for normal mode
+    pinMode(SETB_PIN, OUTPUT);
+    digitalWrite(SETB_PIN, HIGH);
+    delay(100);
+
+    // Example AT command sequence for E78-915LN22S
+
+    // Serial1.println("AT+IREBOOT=0");
+    // delay(3000);
+
+    Serial1.println("AT+CGMI?");
+    delay(100);
+    Serial1.println("AT+CGMM?");
+    delay(100);
+    Serial1.println("AT+CGMR?");
+    delay(100);
+    Serial1.println("AT+CGSN?");
+    delay(100);
+    Serial1.println("AT+CGBR?");
+    delay(100);
+    Serial1.println("AT+CFREQBANDMASK?");
+    delay(100);
+    Serial1.println("AT+CNWM?");
+    delay(100);
+
+
+    Serial1.println("AT+CAPPKEY=493d6071e1c131c1850224aae96078fe"); // Set AppKey
+    delay(100);
+
+    Serial1.println("AT+CAPPEUI=6defe073ab39e835"); // Set AppEUI
+    delay(100);
+
+    Serial1.println("AT+CDEVEUI=5daa5fd696722092"); // Set DevEUI
+    delay(100);
+
+    Serial1.println("AT+CCLASS=0"); // Set Class A
+    delay(100);
+
+    Serial1.println("AT+CJOINMODE=0"); // Set OTAA mode
+    delay(100);
+
+    Serial1.println("AT+CJOIN=1,0,8,8"); // Join
+    delay(30 * 1000);
+
+    String response = "";
+    while (Serial1.available()) {
+        response += (char)Serial1.read();
+    }
+
+    if (response.indexOf("+CJOIN:OK") != -1) {
+        Serial.println(F("E78-915LN22S LoRaWAN OTAA Join successful!"));
+    } else {
+        Serial.println(F("E78-915LN22S OTAA Join failed!"));
+    }
+}
+
 void sendDataWithLMIC(const char *data)
 {
     LMIC_setDrTxpow(1, KEEP_TXPOWADJ);
@@ -510,5 +578,23 @@ void sendDataWithLMIC(const char *data)
     {
         LMIC_setTxData2(8, (uint8_t *)data, strlen(data), 0);
         Serial.println(F("Packet queued with LMIC"));
+    }
+}
+
+void sendDataWithAT(const char* data) {
+    Serial1.print("AT+SEND=8,");
+    Serial1.println(strlen(data));
+    delay(100);
+    Serial1.println(data);
+
+    String response = "";
+    while (Serial1.available()) {
+        response += (char)Serial1.read();
+    }
+
+    if (response.indexOf("OK") != -1) {
+        Serial.println(F("Packet sent successfully with AT commands"));
+    } else {
+        Serial.println(F("Packet sending failed with AT commands"));
     }
 }

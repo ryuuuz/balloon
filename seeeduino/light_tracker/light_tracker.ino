@@ -45,7 +45,7 @@ static const u1_t PROGMEM APPEUI[8] = {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 static const u1_t PROGMEM APPKEY[16] = {0x76, 0xE2, 0x0D, 0x5D, 0xED, 0x02, 0x06, 0xF1, 0xE2, 0x7D, 0xB5, 0xE4, 0x9E, 0xA1, 0xAB, 0xB9}; // helium or ttn
 
 boolean OTAAJoinStatus = false; // do not change this.
-int channelNoFor2ndSubBand = 8; // do not change this. Used for US915 and AU915 / TTN and Helium
+int channelNoFor2ndSubBand = 0; // do not change this. Used for US915 and AU915 / TTN and Helium
 uint32_t last_packet = 0;       // do not change this. Timestamp of last packet sent.
 
 // pinmap for SX1262 LoRa module
@@ -109,6 +109,8 @@ BMP581 pressureSensor;
 uint8_t i2cAddress = BMP581_I2C_ADDRESS_DEFAULT; // 0x47
 // uint8_t i2cAddress = BMP581_I2C_ADDRESS_SECONDARY; // 0x46
 
+void initGNSS();
+
 // Callback: printPVTdata will be called when new NAV PVT data arrives
 // See u-blox_structs.h for the full definition of UBX_NAV_PVT_data_t
 //         _____  You can use any name you like for the callback. Use the same name when you call setAutoPVTcallback
@@ -157,6 +159,12 @@ void printPVTdata(UBX_NAV_PVT_data_t *ubxDataStruct)
     Serial.print(altitude);
     Serial.println(F(" (mm)"));
 }
+
+void processLMICEvents();
+void initAndJoinWithLMIC();
+void initAndJoinWithAT();
+void sendDataWithLMIC(const char *data);
+void sendDataWithAT(const char *data);
 
 // the setup function runs once when you press reset or power the board
 void setup()
@@ -216,37 +224,13 @@ void setup()
         Serial.println(myGNSS.getProtocolVersionLow());
     }
 
-    // myGNSS.setI2COutput(COM_TYPE_UBX); // Set the I2C port to output UBX only (turn off NMEA noise)
+    // initGNSS();
 
-    // myGNSS.newCfgValset(VAL_LAYER_RAM); // Create a new Configuration Interface VALSET message. Apply the changes in RAM only (not BBR).
+    // Example: Initialize and join with LMIC
+    initAndJoinWithLMIC();
 
-    // // Let's say that we want our 1 pulse every 3 seconds to be as accurate as possible. So, let's tell the module
-    // // to generate no signal while it is _locking_ to GNSS time. We want the signal to start only when the module is
-    // // _locked_ to GNSS time.
-    // myGNSS.addCfgValset(UBLOX_CFG_TP_PERIOD_TP1, 0); // Set the period to zero
-    // myGNSS.addCfgValset(UBLOX_CFG_TP_LEN_TP1, 0);    // Set the pulse length to zero
-
-    // // When the module is _locked_ to GNSS time, make it generate a 1 second pulse every 3 seconds
-    // myGNSS.addCfgValset(UBLOX_CFG_TP_PERIOD_LOCK_TP1, 3000000); // Set the period to 3,000,000 us
-    // myGNSS.addCfgValset(UBLOX_CFG_TP_LEN_LOCK_TP1, 1000000);    // Set the pulse length to 1,000,000 us
-
-    // myGNSS.addCfgValset(UBLOX_CFG_TP_TP1_ENA, 1);          // Make sure the enable flag is set to enable the time pulse. (Set to 0 to disable.)
-    // myGNSS.addCfgValset(UBLOX_CFG_TP_USE_LOCKED_TP1, 1);   // Tell the module to use PERIOD while locking and PERIOD_LOCK when locked to GNSS time
-    // myGNSS.addCfgValset(UBLOX_CFG_TP_PULSE_DEF, 0);        // Tell the module that we want to set the period (not the frequency). PERIOD = 0. FREQ = 1.
-    // myGNSS.addCfgValset(UBLOX_CFG_TP_PULSE_LENGTH_DEF, 1); // Tell the module to set the pulse length (not the pulse ratio / duty). RATIO = 0. LENGTH = 1.
-    // myGNSS.addCfgValset(UBLOX_CFG_TP_POL_TP1, 1);          // Tell the module that we want the rising edge at the top of second. Falling Edge = 0. Rising Edge = 1.
-
-    // // Now set the time pulse parameters
-    // if (myGNSS.sendCfgValset() == false)
-    // {
-    //     Serial.println(F("VALSET failed!"));
-    // }
-    // else
-    // {
-    //     Serial.println(F("VALSET Success!"));
-    // }
-
-    myGNSS.setI2COutput(COM_TYPE_UBX); // Set the I2C port to output UBX only (turn off NMEA noise)
+    // Example: Initialize and join with AT commands
+    // initAndJoinWithAT();
 
     // // 初始化USB串口
     // Serial.begin(115200);
@@ -265,64 +249,48 @@ void loop()
     // fetchBMP581Data();
     // fetchGNSSData();
 
-    os_runstep(); // Process the LMIC event queue
-
-    if (!OTAAJoinStatus)
-    {
-        Serial.println(F("Region US915"));
-
-        // LMIC init
-        os_init(nullptr);
-        LMIC_reset();
-
-        // Start OTAA join
-        LMIC_startJoining();
-        Serial.println(F("OTAA Joining..."));
-
-        LMIC_setDrTxpow(0, KEEP_TXPOWADJ);
-        LMIC_selectChannel(7);
-
-        LMIC_setAdrMode(false);
-        // LMIC_setLinkCheckMode(0);
-
-        while ((LMIC.opmode & (OP_JOINING)))
-        {
-            os_runstep();
-        }
-
-        SerialUSB.println(F("LoRaWAN OTAA Login success..."));
-        OTAAJoinStatus = true;
-    }
-
-    LMIC_setDrTxpow(1, KEEP_TXPOWADJ);
-
-    LMIC_selectChannel(channelNoFor2ndSubBand);
-
-    ++channelNoFor2ndSubBand;
-    if (channelNoFor2ndSubBand > 7)
-    {
-        channelNoFor2ndSubBand = 0;
-    }
-    Serial.print(F("Channel: "));
-    Serial.println(channelNoFor2ndSubBand);
-
-    LMIC_setAdrMode(false);
-    LMIC_setLinkCheckMode(0);
-
-    if ((LMIC.opmode & OP_TXRXPEND) != 0)
-    {
-        Serial.println(F("Transmission pending, cannot queue new data"));
-    }
-    else
-    {
-        LMIC_setTxData2(8, (uint8_t *)"Hello, world!", 13, 0);
-        Serial.println(F("Packet queued"));
-    }
+    processLMICEvents(); // Process the LMIC event queue
+    sendDataWithLMIC("Hello, LMIC!");
 
     digitalWrite(LED_BUILTIN, HIGH); // turn the LED on (HIGH is the voltage level)
     delay(3000);                     // wait for a second
     digitalWrite(LED_BUILTIN, LOW);  // turn the LED off by making the voltage LOW
     delay(3000);                     // wait for a second
+}
+
+void initGNSS()
+{
+    myGNSS.setI2COutput(COM_TYPE_UBX); // Set the I2C port to output UBX only (turn off NMEA noise)
+
+    myGNSS.newCfgValset(VAL_LAYER_RAM); // Create a new Configuration Interface VALSET message. Apply the changes in RAM only (not BBR).
+
+    // Let's say that we want our 1 pulse every 3 seconds to be as accurate as possible. So, let's tell the module
+    // to generate no signal while it is _locking_ to GNSS time. We want the signal to start only when the module is
+    // _locked_ to GNSS time.
+    myGNSS.addCfgValset(UBLOX_CFG_TP_PERIOD_TP1, 0); // Set the period to zero
+    myGNSS.addCfgValset(UBLOX_CFG_TP_LEN_TP1, 0);    // Set the pulse length to zero
+
+    // When the module is _locked_ to GNSS time, make it generate a 1 second pulse every 3 seconds
+    myGNSS.addCfgValset(UBLOX_CFG_TP_PERIOD_LOCK_TP1, 3000000); // Set the period to 3,000,000 us
+    myGNSS.addCfgValset(UBLOX_CFG_TP_LEN_LOCK_TP1, 1000000);    // Set the pulse length to 1,000,000 us
+
+    myGNSS.addCfgValset(UBLOX_CFG_TP_TP1_ENA, 1);          // Make sure the enable flag is set to enable the time pulse. (Set to 0 to disable.)
+    myGNSS.addCfgValset(UBLOX_CFG_TP_USE_LOCKED_TP1, 1);   // Tell the module to use PERIOD while locking and PERIOD_LOCK when locked to GNSS time
+    myGNSS.addCfgValset(UBLOX_CFG_TP_PULSE_DEF, 0);        // Tell the module that we want to set the period (not the frequency). PERIOD = 0. FREQ = 1.
+    myGNSS.addCfgValset(UBLOX_CFG_TP_PULSE_LENGTH_DEF, 1); // Tell the module to set the pulse length (not the pulse ratio / duty). RATIO = 0. LENGTH = 1.
+    myGNSS.addCfgValset(UBLOX_CFG_TP_POL_TP1, 1);          // Tell the module that we want the rising edge at the top of second. Falling Edge = 0. Rising Edge = 1.
+
+    // Now set the time pulse parameters
+    if (myGNSS.sendCfgValset() == false)
+    {
+        Serial.println(F("VALSET failed!"));
+    }
+    else
+    {
+        Serial.println(F("VALSET Success!"));
+    }
+
+    myGNSS.setI2COutput(COM_TYPE_UBX); // Set the I2C port to output UBX only (turn off NMEA noise)
 }
 
 void fetchBMP581Data()
@@ -484,5 +452,63 @@ void onLmicEvent(ev_t ev)
         Serial.print(F("Unknown event: "));
         Serial.println(ev);
         break;
+    }
+}
+
+void processLMICEvents()
+{
+    os_runstep();
+}
+
+void initAndJoinWithLMIC()
+{
+    Serial.println(F("Initializing E22-900M22S (LMIC)..."));
+
+    os_init(nullptr); // LMIC initialization
+    LMIC_reset();
+
+    // Start OTAA join
+    LMIC_startJoining();
+    Serial.println(F("Starting OTAA join..."));
+
+    LMIC_setDrTxpow(0, KEEP_TXPOWADJ);
+    LMIC_selectChannel(7);
+    LMIC_setAdrMode(false);
+
+    // Wait for OTAA join to complete
+    while (LMIC.opmode & OP_JOINING)
+    {
+        processLMICEvents();
+    }
+
+    OTAAJoinStatus = true;
+    Serial.println(F("LoRaWAN OTAA Join successful!"));
+}
+
+void sendDataWithLMIC(const char *data)
+{
+    LMIC_setDrTxpow(1, KEEP_TXPOWADJ);
+
+    LMIC_selectChannel(channelNoFor2ndSubBand);
+
+    ++channelNoFor2ndSubBand;
+    if (channelNoFor2ndSubBand > 7)
+    {
+        channelNoFor2ndSubBand = 0;
+    }
+    Serial.print(F("Channel: "));
+    Serial.println(channelNoFor2ndSubBand);
+
+    LMIC_setAdrMode(false);
+    LMIC_setLinkCheckMode(0);
+
+    if ((LMIC.opmode & OP_TXRXPEND) != 0)
+    {
+        Serial.println(F("Transmission pending, cannot queue new data"));
+    }
+    else
+    {
+        LMIC_setTxData2(8, (uint8_t *)data, strlen(data), 0);
+        Serial.println(F("Packet queued with LMIC"));
     }
 }

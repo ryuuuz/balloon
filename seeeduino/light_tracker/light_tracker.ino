@@ -259,7 +259,7 @@ void loop()
     // processLMICEvents(); // Process the LMIC event queue
     // sendDataWithLMIC("Hello, LMIC!");
 
-    // sendDataWithAT("Hello, AT!");
+    sendDataWithAT("Hello, AT!");
 
     digitalWrite(LED_BUILTIN, HIGH); // turn the LED on (HIGH is the voltage level)
     delay(3000);                     // wait for a second
@@ -504,8 +504,8 @@ void initAndJoinWithAT() {
 
     // Example AT command sequence for E78-915LN22S
 
-    // Serial1.println("AT+IREBOOT=0");
-    // delay(3000);
+    Serial1.println("AT+IREBOOT=0");
+    delay(3000);
 
     Serial1.println("AT+CGMI?");
     delay(100);
@@ -523,20 +523,41 @@ void initAndJoinWithAT() {
     delay(100);
 
 
+    Serial1.println("AT+REGIONCFG=US915"); // Set region to US915
+    delay(100);
+
+    // Serial1.println("AT+REGION=1"); // Set region to US915
+    // delay(100);
+
     Serial1.println("AT+CAPPKEY=493d6071e1c131c1850224aae96078fe"); // Set AppKey
     delay(100);
 
-    Serial1.println("AT+CAPPEUI=6defe073ab39e835"); // Set AppEUI
+    Serial1.println("AT+CAPPEUI=229a2a57ea7bfdf7"); // Set AppEUI
     delay(100);
 
     Serial1.println("AT+CDEVEUI=5daa5fd696722092"); // Set DevEUI
     delay(100);
+
+    Serial1.println("AT+CAPPKEY?"); // Check AppKey
+    delay(100);
+
+    Serial1.println("AT+CAPPEUI?"); // Check AppEUI
+    delay(100);
+
+    Serial1.println("AT+CDEVEUI?"); // Check DevEUI
+    delay(100);
+
+    // Serial1.println("AT+CULDLMODE=2");
+    // delay(100);
 
     Serial1.println("AT+CCLASS=0"); // Set Class A
     delay(100);
 
     Serial1.println("AT+CJOINMODE=0"); // Set OTAA mode
     delay(100);
+
+    // Serial1.println("AT+CSTATUS?"); // Check status
+    // delay(100);
 
     Serial1.println("AT+CJOIN=1,0,8,8"); // Join
     delay(30 * 1000);
@@ -582,19 +603,54 @@ void sendDataWithLMIC(const char *data)
 }
 
 void sendDataWithAT(const char* data) {
-    Serial1.print("AT+SEND=8,");
-    Serial1.println(strlen(data));
-    delay(100);
-    Serial1.println(data);
+    // 确定原始数据长度（以字节为单位）
+    int dataLength = strlen(data);
 
+    // 如果数据长度为 0，发送空包
+    if (dataLength == 0) {
+        Serial1.println("AT+DTRX=0,0,0,0");
+        delay(100);
+        Serial.println(F("Sent empty data packet"));
+        return;
+    }
+
+    // 将数据转换为16进制格式（2个字符表示1个字节）
+    String hexPayload = "";
+    for (int i = 0; i < dataLength; i++) {
+        char hexByte[3];  // 每字节两位16进制，外加1个空字符
+        sprintf(hexByte, "%02X", (unsigned char)data[i]);
+        hexPayload += hexByte;
+    }
+
+    // 检查长度是否合法（LoRaWAN规范的最大长度）
+    if (dataLength > 255) {  // 根据具体设备要求调整最大值
+        Serial.println(F("Error: Data length exceeds maximum allowed limit"));
+        return;
+    }
+
+    // 构建 AT 指令
+    Serial1.print("AT+DTRX=0,0,");   // 确认模式0，不重传
+    Serial1.print(dataLength);       // 数据长度
+    Serial1.print(",");              // 逗号分隔符
+    Serial1.println(hexPayload);     // 发送16进制负载数据
+
+    // 等待响应
+    delay(100);
+
+    // 接收设备响应
     String response = "";
     while (Serial1.available()) {
         response += (char)Serial1.read();
     }
 
-    if (response.indexOf("OK") != -1) {
+    // 检查响应内容
+    if (response.indexOf("OK+SEND") != -1) {
         Serial.println(F("Packet sent successfully with AT commands"));
+    } else if (response.indexOf("ERR") != -1) {
+        Serial.println(F("Error: Sending failed. Response: "));
+        Serial.println(response);
     } else {
-        Serial.println(F("Packet sending failed with AT commands"));
+        Serial.println(F("Error: No valid response from device"));
     }
 }
+

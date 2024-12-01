@@ -74,8 +74,8 @@ boolean packetQueued = false;
 #define USB_MANUFACTURER "Your Company"
 #define USB_PRODUCT "ATSAMD21 CDC Device"
 
-// #define Serial Serial1
-// #define USE_SERIAL
+#define Serial Serial1
+#define USE_SERIAL
 
 // 自定义时钟初始化函数
 void initClock()
@@ -231,13 +231,13 @@ void setup()
         Serial.println(myGNSS.getProtocolVersionLow());
     }
 
-    // initGNSS();
+    initGNSS();
 
     // Example: Initialize and join with LMIC
     // initAndJoinWithLMIC();
 
     // Example: Initialize and join with AT commands
-    initAndJoinWithAT();
+    // initAndJoinWithAT();
 
     // // 初始化USB串口
     // Serial.begin(115200);
@@ -253,13 +253,13 @@ void fetchGNSSData();
 // the loop function runs over and over again forever
 void loop()
 {
-    // fetchBMP581Data();
-    // fetchGNSSData();
+    fetchBMP581Data();
+    fetchGNSSData();
 
     // processLMICEvents(); // Process the LMIC event queue
     // sendDataWithLMIC("Hello, LMIC!");
 
-    sendDataWithAT("Hello, AT!");
+    // sendDataWithAT("Hello, AT!");
 
     digitalWrite(LED_BUILTIN, HIGH); // turn the LED on (HIGH is the voltage level)
     delay(3000);                     // wait for a second

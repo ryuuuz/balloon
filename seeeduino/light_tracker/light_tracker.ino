@@ -29,6 +29,11 @@ SFE_UBLOX_GNSS myGNSS;
 #define txPin 10
 #define rxPin 12
 
+#define BattPin A5
+#define GpsPwr 12
+#define GpsON digitalWrite(GpsPwr, LOW);
+#define GpsOFF digitalWrite(GpsPwr, HIGH);
+
 // This EUI must be in little-endian format, so least-significant-byte (lsb)
 // first. When copying an EUI from Helium Console or ttnctl output, this means to reverse the bytes.
 
@@ -73,9 +78,6 @@ boolean packetQueued = false;
 
 #define USB_MANUFACTURER "Your Company"
 #define USB_PRODUCT "ATSAMD21 CDC Device"
-
-#define Serial Serial1
-#define USE_SERIAL
 
 // 自定义时钟初始化函数
 void initClock()
@@ -123,44 +125,44 @@ void initGNSS();
 //        |                 |              |
 void printPVTdata(UBX_NAV_PVT_data_t *ubxDataStruct)
 {
-    Serial.println();
+    SerialUSB.println();
 
-    Serial.print(F("Time: "));         // Print the time
+    SerialUSB.print(F("Time: "));         // Print the time
     uint8_t hms = ubxDataStruct->hour; // Print the hours
     if (hms < 10)
-        Serial.print(F("0")); // Print a leading zero if required
-    Serial.print(hms);
-    Serial.print(F(":"));
+        SerialUSB.print(F("0")); // Print a leading zero if required
+    SerialUSB.print(hms);
+    SerialUSB.print(F(":"));
     hms = ubxDataStruct->min; // Print the minutes
     if (hms < 10)
-        Serial.print(F("0")); // Print a leading zero if required
-    Serial.print(hms);
-    Serial.print(F(":"));
+        SerialUSB.print(F("0")); // Print a leading zero if required
+    SerialUSB.print(hms);
+    SerialUSB.print(F(":"));
     hms = ubxDataStruct->sec; // Print the seconds
     if (hms < 10)
-        Serial.print(F("0")); // Print a leading zero if required
-    Serial.print(hms);
-    Serial.print(F("."));
+        SerialUSB.print(F("0")); // Print a leading zero if required
+    SerialUSB.print(hms);
+    SerialUSB.print(F("."));
     uint32_t millisecs = ubxDataStruct->iTOW % 1000; // Print the milliseconds
     if (millisecs < 100)
-        Serial.print(F("0")); // Print the trailing zeros correctly
+        SerialUSB.print(F("0")); // Print the trailing zeros correctly
     if (millisecs < 10)
-        Serial.print(F("0"));
-    Serial.print(millisecs);
+        SerialUSB.print(F("0"));
+    SerialUSB.print(millisecs);
 
     int32_t latitude = ubxDataStruct->lat; // Print the latitude
-    Serial.print(F(" Lat: "));
-    Serial.print(latitude);
+    SerialUSB.print(F(" Lat: "));
+    SerialUSB.print(latitude);
 
     int32_t longitude = ubxDataStruct->lon; // Print the longitude
-    Serial.print(F(" Long: "));
-    Serial.print(longitude);
-    Serial.print(F(" (degrees * 10^-7)"));
+    SerialUSB.print(F(" Long: "));
+    SerialUSB.print(longitude);
+    SerialUSB.print(F(" (degrees * 10^-7)"));
 
     int32_t altitude = ubxDataStruct->hMSL; // Print the height above mean sea level
-    Serial.print(F(" Height above MSL: "));
-    Serial.print(altitude);
-    Serial.println(F(" (mm)"));
+    SerialUSB.print(F(" Height above MSL: "));
+    SerialUSB.print(altitude);
+    SerialUSB.println(F(" (mm)"));
 }
 
 void processLMICEvents();
@@ -173,15 +175,12 @@ void sendDataWithAT(const char *data);
 void setup()
 {
     // 调用自定义时钟初始化函数
-    initClock();
+    // initClock();
 
-    Serial.begin(115200, SERIAL_8N1);
-    Serial.println("Serial Ready!");
+    delay(5000); // do not change this
 
-    #ifndef USE_SERIAL
-    Serial1.begin(9600, SERIAL_8N1);
-    Serial.println("Serial1 Ready!");
-    #endif
+    SerialUSB.begin(115200, SERIAL_8N1);
+    SerialUSB.println("Serial Ready!");
 
     // Initialize the LED pin
     pinMode(LED_BUILTIN, OUTPUT);
@@ -194,19 +193,23 @@ void setup()
     while (pressureSensor.beginI2C(i2cAddress) != BMP5_OK)
     {
         // Not connected, inform user
-        Serial.println("Error: BMP581 not connected, check wiring and I2C address!");
+        SerialUSB.println("Error: BMP581 not connected, check wiring and I2C address!");
 
         // Wait a bit to see if connection is established
         delay(1000);
     }
 
-    Serial.println("BMP581 connected!");
+    SerialUSB.println("BMP581 connected!");
 
     // myGNSS.enableDebugging(); // Uncomment this line to enable helpful debug messages on Serial
 
+    pinMode(GpsPwr, OUTPUT);
+    GpsON;
+    delay(500);
+    
     if (myGNSS.begin() == false) // Connect to the u-blox module using Wire port
     {
-        Serial.println(F("u-blox GNSS not detected at default I2C address. Please check wiring. Freezing."));
+        SerialUSB.println(F("u-blox GNSS not detected at default I2C address. Please check wiring. Freezing."));
         while (1)
             ;
     }
@@ -214,21 +217,21 @@ void setup()
     // Read the module info
     if (myGNSS.getModuleInfo()) // This line is optional. getModuleName() etc. will read the info if required
     {
-        Serial.print(F("The GNSS module is: "));
-        Serial.println(myGNSS.getModuleName());
+        SerialUSB.print(F("The GNSS module is: "));
+        SerialUSB.println(myGNSS.getModuleName());
 
-        Serial.print(F("The firmware type is: "));
-        Serial.println(myGNSS.getFirmwareType());
+        SerialUSB.print(F("The firmware type is: "));
+        SerialUSB.println(myGNSS.getFirmwareType());
 
-        Serial.print(F("The firmware version is: "));
-        Serial.print(myGNSS.getFirmwareVersionHigh());
-        Serial.print(F("."));
-        Serial.println(myGNSS.getFirmwareVersionLow());
+        SerialUSB.print(F("The firmware version is: "));
+        SerialUSB.print(myGNSS.getFirmwareVersionHigh());
+        SerialUSB.print(F("."));
+        SerialUSB.println(myGNSS.getFirmwareVersionLow());
 
-        Serial.print(F("The protocol version is: "));
-        Serial.print(myGNSS.getProtocolVersionHigh());
-        Serial.print(F("."));
-        Serial.println(myGNSS.getProtocolVersionLow());
+        SerialUSB.print(F("The protocol version is: "));
+        SerialUSB.print(myGNSS.getProtocolVersionHigh());
+        SerialUSB.print(F("."));
+        SerialUSB.println(myGNSS.getProtocolVersionLow());
     }
 
     initGNSS();
@@ -240,11 +243,11 @@ void setup()
     // initAndJoinWithAT();
 
     // // 初始化USB串口
-    // Serial.begin(115200);
+    // SerialUSB.begin(115200);
     // while (!Serial) {
     //   // 等待串口连接
     // }
-    // Serial.println("USB CDC Ready!");
+    // SerialUSB.println("USB CDC Ready!");
 }
 
 void fetchBMP581Data();
@@ -262,44 +265,70 @@ void loop()
     // sendDataWithAT("Hello, AT!");
 
     digitalWrite(LED_BUILTIN, HIGH); // turn the LED on (HIGH is the voltage level)
-    delay(3000);                     // wait for a second
+    delay(1000);                     // wait for a second
     digitalWrite(LED_BUILTIN, LOW);  // turn the LED off by making the voltage LOW
-    delay(3000);                     // wait for a second
+    delay(1000);                     // wait for a second
+}
+
+void setupUBloxDynamicModel()
+{
+    // If we are going to change the dynamic platform model, let's do it here.
+    // Possible values are:
+    // PORTABLE, STATIONARY, PEDESTRIAN, AUTOMOTIVE, SEA, AIRBORNE1g, AIRBORNE2g, AIRBORNE4g, WRIST, BIKE
+    // DYN_MODEL_AIRBORNE4g model increases ublox max. altitude limit from 12.000 meters to 50.000 meters.
+    if (myGNSS.setDynamicModel(DYN_MODEL_AIRBORNE4g) == false) // Set the dynamic model to DYN_MODEL_AIRBORNE4g
+    {
+        SerialUSB.println(F("***!!! Warning: setDynamicModel failed !!!***"));
+    }
+    else
+    {
+        SerialUSB.print(F("Dynamic platform model changed successfully! : "));
+        SerialUSB.println(myGNSS.getDynamicModel());
+    }
 }
 
 void initGNSS()
 {
     myGNSS.setI2COutput(COM_TYPE_UBX); // Set the I2C port to output UBX only (turn off NMEA noise)
 
-    myGNSS.newCfgValset(VAL_LAYER_RAM); // Create a new Configuration Interface VALSET message. Apply the changes in RAM only (not BBR).
+    myGNSS.setNavigationFrequency(2);            // Set output to 2 times a second. Max is 10
+    byte rate = myGNSS.getNavigationFrequency(); // Get the update rate of this module
+    SerialUSB.print("Current update rate for GPS: ");
+    SerialUSB.println(rate);
 
-    // Let's say that we want our 1 pulse every 3 seconds to be as accurate as possible. So, let's tell the module
-    // to generate no signal while it is _locking_ to GNSS time. We want the signal to start only when the module is
-    // _locked_ to GNSS time.
-    myGNSS.addCfgValset(UBLOX_CFG_TP_PERIOD_TP1, 0); // Set the period to zero
-    myGNSS.addCfgValset(UBLOX_CFG_TP_LEN_TP1, 0);    // Set the pulse length to zero
+    myGNSS.saveConfiguration(); // Save the current settings to flash and BBR
 
-    // When the module is _locked_ to GNSS time, make it generate a 1 second pulse every 3 seconds
-    myGNSS.addCfgValset(UBLOX_CFG_TP_PERIOD_LOCK_TP1, 3000000); // Set the period to 3,000,000 us
-    myGNSS.addCfgValset(UBLOX_CFG_TP_LEN_LOCK_TP1, 1000000);    // Set the pulse length to 1,000,000 us
+    setupUBloxDynamicModel();
 
-    myGNSS.addCfgValset(UBLOX_CFG_TP_TP1_ENA, 1);          // Make sure the enable flag is set to enable the time pulse. (Set to 0 to disable.)
-    myGNSS.addCfgValset(UBLOX_CFG_TP_USE_LOCKED_TP1, 1);   // Tell the module to use PERIOD while locking and PERIOD_LOCK when locked to GNSS time
-    myGNSS.addCfgValset(UBLOX_CFG_TP_PULSE_DEF, 0);        // Tell the module that we want to set the period (not the frequency). PERIOD = 0. FREQ = 1.
-    myGNSS.addCfgValset(UBLOX_CFG_TP_PULSE_LENGTH_DEF, 1); // Tell the module to set the pulse length (not the pulse ratio / duty). RATIO = 0. LENGTH = 1.
-    myGNSS.addCfgValset(UBLOX_CFG_TP_POL_TP1, 1);          // Tell the module that we want the rising edge at the top of second. Falling Edge = 0. Rising Edge = 1.
+    // myGNSS.newCfgValset(VAL_LAYER_RAM); // Create a new Configuration Interface VALSET message. Apply the changes in RAM only (not BBR).
 
-    // Now set the time pulse parameters
-    if (myGNSS.sendCfgValset() == false)
-    {
-        Serial.println(F("VALSET failed!"));
-    }
-    else
-    {
-        Serial.println(F("VALSET Success!"));
-    }
+    // // Let's say that we want our 1 pulse every 3 seconds to be as accurate as possible. So, let's tell the module
+    // // to generate no signal while it is _locking_ to GNSS time. We want the signal to start only when the module is
+    // // _locked_ to GNSS time.
+    // myGNSS.addCfgValset(UBLOX_CFG_TP_PERIOD_TP1, 0); // Set the period to zero
+    // myGNSS.addCfgValset(UBLOX_CFG_TP_LEN_TP1, 0);    // Set the pulse length to zero
 
-    myGNSS.setI2COutput(COM_TYPE_UBX); // Set the I2C port to output UBX only (turn off NMEA noise)
+    // // When the module is _locked_ to GNSS time, make it generate a 1 second pulse every 3 seconds
+    // myGNSS.addCfgValset(UBLOX_CFG_TP_PERIOD_LOCK_TP1, 3000000); // Set the period to 3,000,000 us
+    // myGNSS.addCfgValset(UBLOX_CFG_TP_LEN_LOCK_TP1, 1000000);    // Set the pulse length to 1,000,000 us
+
+    // myGNSS.addCfgValset(UBLOX_CFG_TP_TP1_ENA, 1);          // Make sure the enable flag is set to enable the time pulse. (Set to 0 to disable.)
+    // myGNSS.addCfgValset(UBLOX_CFG_TP_USE_LOCKED_TP1, 1);   // Tell the module to use PERIOD while locking and PERIOD_LOCK when locked to GNSS time
+    // myGNSS.addCfgValset(UBLOX_CFG_TP_PULSE_DEF, 0);        // Tell the module that we want to set the period (not the frequency). PERIOD = 0. FREQ = 1.
+    // myGNSS.addCfgValset(UBLOX_CFG_TP_PULSE_LENGTH_DEF, 1); // Tell the module to set the pulse length (not the pulse ratio / duty). RATIO = 0. LENGTH = 1.
+    // myGNSS.addCfgValset(UBLOX_CFG_TP_POL_TP1, 1);          // Tell the module that we want the rising edge at the top of second. Falling Edge = 0. Rising Edge = 1.
+
+    // // Now set the time pulse parameters
+    // if (myGNSS.sendCfgValset() == false)
+    // {
+    //     SerialUSB.println(F("VALSET failed!"));
+    // }
+    // else
+    // {
+    //     SerialUSB.println(F("VALSET Success!"));
+    // }
+
+    // myGNSS.setI2COutput(COM_TYPE_UBX); // Set the I2C port to output UBX only (turn off NMEA noise)
 }
 
 void fetchBMP581Data()
@@ -312,17 +341,17 @@ void fetchBMP581Data()
     if (err == BMP5_OK)
     {
         // Acquisistion succeeded, print temperature and pressure
-        Serial.print("Temperature (C): ");
-        Serial.print(data.temperature);
-        Serial.print("\t\t");
-        Serial.print("Pressure (Pa): ");
-        Serial.println(data.pressure);
+        SerialUSB.print("Temperature (C): ");
+        SerialUSB.print(data.temperature);
+        SerialUSB.print("\t\t");
+        SerialUSB.print("Pressure (Pa): ");
+        SerialUSB.println(data.pressure);
     }
     else
     {
         // Acquisition failed, most likely a communication error (code -2)
-        Serial.print("Error getting data from sensor! Error code: ");
-        Serial.println(err);
+        SerialUSB.print("Error getting data from sensor! Error code: ");
+        SerialUSB.println(err);
     }
 }
 
@@ -334,33 +363,32 @@ void fetchGNSSData()
     if (myGNSS.getPVT() == true)
     {
         uint8_t fix_type = myGNSS.getFixType();
-        Serial.print(F("Fix type: "));
-        Serial.println(fix_type);
+        SerialUSB.print(F("Fix type: "));
+        SerialUSB.print(fix_type);
 
         uint8_t siv = myGNSS.getSIV();
-        Serial.print(F(" SIV: "));
-        Serial.println(siv);
+        SerialUSB.print(F(" SIV: "));
+        SerialUSB.print(siv);
 
         int32_t latitude = myGNSS.getLatitude();
-        Serial.print(F("Lat: "));
-        Serial.print(latitude);
+        SerialUSB.print(F(" Lat: "));
+        SerialUSB.print(latitude);
 
         int32_t longitude = myGNSS.getLongitude();
-        Serial.print(F(" Long: "));
-        Serial.print(longitude);
-        Serial.print(F(" (degrees * 10^-7)"));
+        SerialUSB.print(F(" Long: "));
+        SerialUSB.print(longitude);
+        SerialUSB.print(F(" (degrees * 10^-7)"));
 
         int32_t altitude = myGNSS.getAltitudeMSL(); // Altitude above Mean Sea Level
-        Serial.print(F(" Alt: "));
-        Serial.print(altitude);
-        Serial.print(F(" (mm)"));
+        SerialUSB.print(F(" Alt: "));
+        SerialUSB.print(altitude);
+        SerialUSB.print(F(" (mm)"));
 
-        Serial.println();
-        Serial.println();
+        SerialUSB.println();
     }
     else
     {
-        Serial.println(F("No new data."));
+        SerialUSB.println(F("No new data."));
     }
 
     // myGNSS.checkUblox();     // Check for the arrival of new data and process it.
@@ -374,92 +402,92 @@ void os_getNwkKey(u1_t *buf) { memcpy_P(buf, APPKEY, 16); }
 
 void onLmicEvent(ev_t ev)
 {
-    Serial.print(os_getTime());
-    Serial.print(": ");
+    SerialUSB.print(os_getTime());
+    SerialUSB.print(": ");
     switch (ev)
     {
     case EV_SCAN_TIMEOUT:
-        Serial.println(F("EV_SCAN_TIMEOUT"));
+        SerialUSB.println(F("EV_SCAN_TIMEOUT"));
         break;
     case EV_BEACON_FOUND:
-        Serial.println(F("EV_BEACON_FOUND"));
+        SerialUSB.println(F("EV_BEACON_FOUND"));
         break;
     case EV_BEACON_MISSED:
-        Serial.println(F("EV_BEACON_MISSED"));
+        SerialUSB.println(F("EV_BEACON_MISSED"));
         break;
     case EV_BEACON_TRACKED:
-        Serial.println(F("EV_BEACON_TRACKED"));
+        SerialUSB.println(F("EV_BEACON_TRACKED"));
         break;
     case EV_JOINING:
-        Serial.println(F("EV_JOINING"));
+        SerialUSB.println(F("EV_JOINING"));
         break;
     case EV_JOINED:
-        Serial.println(F("EV_JOINED"));
+        SerialUSB.println(F("EV_JOINED"));
 
         // Disable link check validation (automatically enabled
         // during join, but not supported by TTN at this time).
         LMIC_setLinkCheckMode(0);
         break;
     case EV_RFU1:
-        Serial.println(F("EV_RFU1"));
+        SerialUSB.println(F("EV_RFU1"));
         break;
     case EV_JOIN_FAILED:
-        Serial.println(F("EV_JOIN_FAILED"));
+        SerialUSB.println(F("EV_JOIN_FAILED"));
         break;
     case EV_REJOIN_FAILED:
-        Serial.println(F("EV_REJOIN_FAILED"));
+        SerialUSB.println(F("EV_REJOIN_FAILED"));
         break;
         break;
     case EV_TXCOMPLETE:
-        Serial.println(F("EV_TXCOMPLETE (includes waiting for RX windows)"));
+        SerialUSB.println(F("EV_TXCOMPLETE (includes waiting for RX windows)"));
         packetQueued = false;
         if (LMIC.txrxFlags & TXRX_ACK)
-            Serial.println(F("Received ack"));
+            SerialUSB.println(F("Received ack"));
         if (LMIC.dataLen)
         {
-            Serial.print(F("Received "));
-            Serial.print(LMIC.dataLen);
-            Serial.println(F(" bytes of payload"));
+            SerialUSB.print(F("Received "));
+            SerialUSB.print(LMIC.dataLen);
+            SerialUSB.println(F(" bytes of payload"));
         }
         break;
     case EV_LOST_TSYNC:
-        Serial.println(F("EV_LOST_TSYNC"));
+        SerialUSB.println(F("EV_LOST_TSYNC"));
         break;
     case EV_RESET:
-        Serial.println(F("EV_RESET"));
+        SerialUSB.println(F("EV_RESET"));
         break;
     case EV_RXCOMPLETE:
         // data received in ping slot
-        Serial.println(F("EV_RXCOMPLETE"));
+        SerialUSB.println(F("EV_RXCOMPLETE"));
         break;
     case EV_LINK_DEAD:
-        Serial.println(F("EV_LINK_DEAD"));
+        SerialUSB.println(F("EV_LINK_DEAD"));
         break;
     case EV_LINK_ALIVE:
-        Serial.println(F("EV_LINK_ALIVE"));
+        SerialUSB.println(F("EV_LINK_ALIVE"));
         break;
     case EV_SCAN_FOUND:
-        Serial.println(F("EV_SCAN_FOUND"));
+        SerialUSB.println(F("EV_SCAN_FOUND"));
         break;
     case EV_TXSTART:
-        Serial.println(F("EV_TXSTART"));
+        SerialUSB.println(F("EV_TXSTART"));
         break;
     case EV_TXDONE:
-        Serial.println(F("EV_TXDONE"));
+        SerialUSB.println(F("EV_TXDONE"));
         break;
     case EV_DATARATE:
-        Serial.println(F("EV_DATARATE"));
+        SerialUSB.println(F("EV_DATARATE"));
         break;
     case EV_START_SCAN:
-        Serial.println(F("EV_START_SCAN"));
+        SerialUSB.println(F("EV_START_SCAN"));
         break;
     case EV_ADR_BACKOFF:
-        Serial.println(F("EV_ADR_BACKOFF"));
+        SerialUSB.println(F("EV_ADR_BACKOFF"));
         break;
 
     default:
-        Serial.print(F("Unknown event: "));
-        Serial.println(ev);
+        SerialUSB.print(F("Unknown event: "));
+        SerialUSB.println(ev);
         break;
     }
 }
@@ -471,14 +499,14 @@ void processLMICEvents()
 
 void initAndJoinWithLMIC()
 {
-    Serial.println(F("Initializing E22-900M22S (LMIC)..."));
+    SerialUSB.println(F("Initializing E22-900M22S (LMIC)..."));
 
     os_init(nullptr); // LMIC initialization
     LMIC_reset();
 
     // Start OTAA join
     LMIC_startJoining();
-    Serial.println(F("Starting OTAA join..."));
+    SerialUSB.println(F("Starting OTAA join..."));
 
     LMIC_setDrTxpow(0, KEEP_TXPOWADJ);
     LMIC_selectChannel(7);
@@ -491,11 +519,11 @@ void initAndJoinWithLMIC()
     }
 
     OTAAJoinStatus = true;
-    Serial.println(F("LoRaWAN OTAA Join successful!"));
+    SerialUSB.println(F("LoRaWAN OTAA Join successful!"));
 }
 
 void initAndJoinWithAT() {
-    Serial.println(F("Initializing E78-915LN22S (AT Commands)..."));
+    SerialUSB.println(F("Initializing E78-915LN22S (AT Commands)..."));
 
     // LOW for low power mode, HIGH for normal mode
     pinMode(SETB_PIN, OUTPUT);
@@ -568,9 +596,9 @@ void initAndJoinWithAT() {
     }
 
     if (response.indexOf("+CJOIN:OK") != -1) {
-        Serial.println(F("E78-915LN22S LoRaWAN OTAA Join successful!"));
+        SerialUSB.println(F("E78-915LN22S LoRaWAN OTAA Join successful!"));
     } else {
-        Serial.println(F("E78-915LN22S OTAA Join failed!"));
+        SerialUSB.println(F("E78-915LN22S OTAA Join failed!"));
     }
 }
 
@@ -585,20 +613,20 @@ void sendDataWithLMIC(const char *data)
     {
         channelNoFor2ndSubBand = 0;
     }
-    Serial.print(F("Channel: "));
-    Serial.println(channelNoFor2ndSubBand);
+    SerialUSB.print(F("Channel: "));
+    SerialUSB.println(channelNoFor2ndSubBand);
 
     LMIC_setAdrMode(false);
     LMIC_setLinkCheckMode(0);
 
     if ((LMIC.opmode & OP_TXRXPEND) != 0)
     {
-        Serial.println(F("Transmission pending, cannot queue new data"));
+        SerialUSB.println(F("Transmission pending, cannot queue new data"));
     }
     else
     {
         LMIC_setTxData2(8, (uint8_t *)data, strlen(data), 0);
-        Serial.println(F("Packet queued with LMIC"));
+        SerialUSB.println(F("Packet queued with LMIC"));
     }
 }
 
@@ -610,7 +638,7 @@ void sendDataWithAT(const char* data) {
     if (dataLength == 0) {
         Serial1.println("AT+DTRX=0,0,0,0");
         delay(100);
-        Serial.println(F("Sent empty data packet"));
+        SerialUSB.println(F("Sent empty data packet"));
         return;
     }
 
@@ -624,7 +652,7 @@ void sendDataWithAT(const char* data) {
 
     // 检查长度是否合法（LoRaWAN规范的最大长度）
     if (dataLength > 255) {  // 根据具体设备要求调整最大值
-        Serial.println(F("Error: Data length exceeds maximum allowed limit"));
+        SerialUSB.println(F("Error: Data length exceeds maximum allowed limit"));
         return;
     }
 
@@ -645,12 +673,12 @@ void sendDataWithAT(const char* data) {
 
     // 检查响应内容
     if (response.indexOf("OK+SEND") != -1) {
-        Serial.println(F("Packet sent successfully with AT commands"));
+        SerialUSB.println(F("Packet sent successfully with AT commands"));
     } else if (response.indexOf("ERR") != -1) {
-        Serial.println(F("Error: Sending failed. Response: "));
-        Serial.println(response);
+        SerialUSB.println(F("Error: Sending failed. Response: "));
+        SerialUSB.println(response);
     } else {
-        Serial.println(F("Error: No valid response from device"));
+        SerialUSB.println(F("Error: No valid response from device"));
     }
 }
 

@@ -18,6 +18,8 @@ SFE_UBLOX_GNSS myGNSS;
 #include <basicmac.h>
 #include <hal/hal.h>
 
+#include <CayenneLPP.h>
+
 #define _REGCODE_US915 3
 
 // SX1262 has the following connections:
@@ -25,9 +27,6 @@ SFE_UBLOX_GNSS myGNSS;
 #define rstPin 9
 #define dio1Pin 3
 #define busyPin 2
-
-#define txPin 10
-#define rxPin 12
 
 #define BattPin A5
 #define GpsPwr 12
@@ -37,21 +36,26 @@ SFE_UBLOX_GNSS myGNSS;
 // This EUI must be in little-endian format, so least-significant-byte (lsb)
 // first. When copying an EUI from Helium Console or ttnctl output, this means to reverse the bytes.
 
-static const u1_t PROGMEM DEVEUI[8] = {0x6C, 0x15, 0xB4, 0x03, 0x22, 0xF6, 0xEE, 0x06}; // helium or ttn
+static const u1_t PROGMEM DEVEUI[8] = {0x06, 0xef, 0xd3, 0x85, 0xcb, 0xf6, 0xc1, 0x2b}; // helium or ttn
 
 // This EUI must be in little-endian format, so least-significant-byte (lsb)
 // first. When copying an EUI from Helium Console or ttnctl output, this means to reverse the bytes.
 
-static const u1_t PROGMEM APPEUI[8] = {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07}; // helium or ttn
+static const u1_t PROGMEM APPEUI[8] = {0x53, 0xb8, 0x67, 0xb0, 0xd3, 0xae, 0xe1, 0x38}; // helium or ttn
 
 // This key should be in big endian format (or, since it is not really a
 // number but a block of memory, endianness does not really apply). In practice, a key taken from Helium Console or ttnctl can be copied as-is.
 
-static const u1_t PROGMEM APPKEY[16] = {0x76, 0xE2, 0x0D, 0x5D, 0xED, 0x02, 0x06, 0xF1, 0xE2, 0x7D, 0xB5, 0xE4, 0x9E, 0xA1, 0xAB, 0xB9}; // helium or ttn
+static const u1_t PROGMEM APPKEY[16] = {0x74, 0x5b, 0x9b, 0x1a, 0xce, 0xe7, 0xb8, 0xa2, 0xa9, 0x8f, 0x48, 0x62, 0x7a, 0x16, 0x49, 0x88}; // helium or ttn
 
 boolean OTAAJoinStatus = false; // do not change this.
 int channelNoFor2ndSubBand = 0; // do not change this. Used for US915 and AU915 / TTN and Helium
 uint32_t last_packet = 0;       // do not change this. Timestamp of last packet sent.
+
+uint8_t measurementSystem = 0; // 0 for metric (meters, km, Celcius, etc.), 1 for imperial (feet, mile, Fahrenheit,etc.)
+
+// try to keep telemetry size smaller than 51 bytes if possible. Default telemetry size is 37 bytes.
+CayenneLPP telemetry(37);
 
 // pinmap for SX1262 LoRa module
 const lmic_pinmap lmic_pins = {
@@ -167,9 +171,7 @@ void printPVTdata(UBX_NAV_PVT_data_t *ubxDataStruct)
 
 void processLMICEvents();
 void initAndJoinWithLMIC();
-void initAndJoinWithAT();
 void sendDataWithLMIC(const char *data);
-void sendDataWithAT(const char *data);
 
 // the setup function runs once when you press reset or power the board
 void setup()
@@ -236,18 +238,8 @@ void setup()
 
     initGNSS();
 
-    // Example: Initialize and join with LMIC
-    // initAndJoinWithLMIC();
-
-    // Example: Initialize and join with AT commands
-    // initAndJoinWithAT();
-
-    // // 初始化USB串口
-    // SerialUSB.begin(115200);
-    // while (!Serial) {
-    //   // 等待串口连接
-    // }
-    // SerialUSB.println("USB CDC Ready!");
+    // Initialize and join with LMIC
+    initAndJoinWithLMIC();
 }
 
 void fetchBMP581Data();
@@ -259,10 +251,10 @@ void loop()
     fetchBMP581Data();
     fetchGNSSData();
 
-    // processLMICEvents(); // Process the LMIC event queue
+    processLMICEvents(); // Process the LMIC event queue
     // sendDataWithLMIC("Hello, LMIC!");
-
-    // sendDataWithAT("Hello, AT!");
+    updateTelemetry();
+    sendLoRaWANPacket();
 
     digitalWrite(LED_BUILTIN, HIGH); // turn the LED on (HIGH is the voltage level)
     delay(1000);                     // wait for a second
@@ -299,36 +291,6 @@ void initGNSS()
     myGNSS.saveConfiguration(); // Save the current settings to flash and BBR
 
     setupUBloxDynamicModel();
-
-    // myGNSS.newCfgValset(VAL_LAYER_RAM); // Create a new Configuration Interface VALSET message. Apply the changes in RAM only (not BBR).
-
-    // // Let's say that we want our 1 pulse every 3 seconds to be as accurate as possible. So, let's tell the module
-    // // to generate no signal while it is _locking_ to GNSS time. We want the signal to start only when the module is
-    // // _locked_ to GNSS time.
-    // myGNSS.addCfgValset(UBLOX_CFG_TP_PERIOD_TP1, 0); // Set the period to zero
-    // myGNSS.addCfgValset(UBLOX_CFG_TP_LEN_TP1, 0);    // Set the pulse length to zero
-
-    // // When the module is _locked_ to GNSS time, make it generate a 1 second pulse every 3 seconds
-    // myGNSS.addCfgValset(UBLOX_CFG_TP_PERIOD_LOCK_TP1, 3000000); // Set the period to 3,000,000 us
-    // myGNSS.addCfgValset(UBLOX_CFG_TP_LEN_LOCK_TP1, 1000000);    // Set the pulse length to 1,000,000 us
-
-    // myGNSS.addCfgValset(UBLOX_CFG_TP_TP1_ENA, 1);          // Make sure the enable flag is set to enable the time pulse. (Set to 0 to disable.)
-    // myGNSS.addCfgValset(UBLOX_CFG_TP_USE_LOCKED_TP1, 1);   // Tell the module to use PERIOD while locking and PERIOD_LOCK when locked to GNSS time
-    // myGNSS.addCfgValset(UBLOX_CFG_TP_PULSE_DEF, 0);        // Tell the module that we want to set the period (not the frequency). PERIOD = 0. FREQ = 1.
-    // myGNSS.addCfgValset(UBLOX_CFG_TP_PULSE_LENGTH_DEF, 1); // Tell the module to set the pulse length (not the pulse ratio / duty). RATIO = 0. LENGTH = 1.
-    // myGNSS.addCfgValset(UBLOX_CFG_TP_POL_TP1, 1);          // Tell the module that we want the rising edge at the top of second. Falling Edge = 0. Rising Edge = 1.
-
-    // // Now set the time pulse parameters
-    // if (myGNSS.sendCfgValset() == false)
-    // {
-    //     SerialUSB.println(F("VALSET failed!"));
-    // }
-    // else
-    // {
-    //     SerialUSB.println(F("VALSET Success!"));
-    // }
-
-    // myGNSS.setI2COutput(COM_TYPE_UBX); // Set the I2C port to output UBX only (turn off NMEA noise)
 }
 
 void fetchBMP581Data()
@@ -393,6 +355,47 @@ void fetchGNSSData()
 
     // myGNSS.checkUblox();     // Check for the arrival of new data and process it.
     // myGNSS.checkCallbacks(); // Check if any callbacks are waiting to be processed.
+}
+
+void updateTelemetry()
+{
+    // Get measurements from the sensor
+    bmp5_sensor_data data = {0, 0};
+    int8_t err = pressureSensor.getSensorData(&data);
+
+    float tempAltitudeLong = 0;  // meters or feet
+    float tempAltitudeShort = 0; // km or miles
+    float tempSpeed = 0;         // km or miles
+    float tempTemperature = 0;   // Celcius or Fahrenheit
+
+    if (measurementSystem == 0)
+    { // Metric
+
+        tempAltitudeLong = myGNSS.getAltitude() / 1000.f; // meters
+        tempAltitudeShort = tempAltitudeLong / 1000.f;   // kilometers
+        tempSpeed = myGNSS.getGroundSpeed() * 0.0036f;    // km/hour
+        tempTemperature = data.temperature;             // Celsius
+    }
+    else
+    { // Imperial
+
+        tempAltitudeLong = (myGNSS.getAltitude() * 3.2808399) / 1000.f; // feet
+        tempAltitudeShort = tempAltitudeLong / 5280.f;                 // miles
+        tempSpeed = myGNSS.getGroundSpeed() * 0.00223694f;              // mile/hour
+        tempTemperature = (data.temperature * 1.8f) + 32;             // Fahrenheit
+    }
+
+    // latitude,longtitude,altitude,speed,course,sattelite,battery,temp,pressure
+
+    telemetry.reset();                                                                                          // clear the buffer
+    telemetry.addGPS(1, myGNSS.getLatitude() / 10000000.f, myGNSS.getLongitude() / 10000000.f, tempAltitudeLong); // channel 3, coordinates and altitude (meters or feet)
+    telemetry.addTemperature(2, tempTemperature);                                                               // Celcius or Fahrenheit
+    telemetry.addAnalogInput(3, voltage);                                                                       // Battery/Supercaps voltage
+    telemetry.addDigitalInput(4, myGNSS.getSIV());                                                               // GPS sattelites in view
+    telemetry.addAnalogInput(5, tempSpeed);                                                                     // km/h or mile/h
+    telemetry.addDigitalInput(6, myGNSS.getHeading() / 100000);                                                  // course in degrees
+    telemetry.addBarometricPressure(7, data.pressure / 100.f);                                                 // pressure
+    telemetry.addAnalogInput(8, tempAltitudeShort);                                                             // kilometers or miles
 }
 
 u1_t os_getRegion(void) { return _REGCODE_US915; }
@@ -508,9 +511,12 @@ void initAndJoinWithLMIC()
     LMIC_startJoining();
     SerialUSB.println(F("Starting OTAA join..."));
 
-    LMIC_setDrTxpow(0, KEEP_TXPOWADJ);
-    LMIC_selectChannel(7);
-    LMIC_setAdrMode(false);
+    SerialUSB.println(F("Region US915"));
+    // LMIC_setDrTxpow(0, KEEP_TXPOWADJ);
+    // LMIC_selectChannel(7);
+
+    // LMIC_setAdrMode(false);
+    // LMIC_setLinkCheckMode(0);
 
     // Wait for OTAA join to complete
     while (LMIC.opmode & OP_JOINING)
@@ -520,86 +526,6 @@ void initAndJoinWithLMIC()
 
     OTAAJoinStatus = true;
     SerialUSB.println(F("LoRaWAN OTAA Join successful!"));
-}
-
-void initAndJoinWithAT() {
-    SerialUSB.println(F("Initializing E78-915LN22S (AT Commands)..."));
-
-    // LOW for low power mode, HIGH for normal mode
-    pinMode(SETB_PIN, OUTPUT);
-    digitalWrite(SETB_PIN, HIGH);
-    delay(100);
-
-    // Example AT command sequence for E78-915LN22S
-
-    Serial1.println("AT+IREBOOT=0");
-    delay(3000);
-
-    Serial1.println("AT+CGMI?");
-    delay(100);
-    Serial1.println("AT+CGMM?");
-    delay(100);
-    Serial1.println("AT+CGMR?");
-    delay(100);
-    Serial1.println("AT+CGSN?");
-    delay(100);
-    Serial1.println("AT+CGBR?");
-    delay(100);
-    Serial1.println("AT+CFREQBANDMASK?");
-    delay(100);
-    Serial1.println("AT+CNWM?");
-    delay(100);
-
-
-    Serial1.println("AT+REGIONCFG=US915"); // Set region to US915
-    delay(100);
-
-    // Serial1.println("AT+REGION=1"); // Set region to US915
-    // delay(100);
-
-    Serial1.println("AT+CAPPKEY=493d6071e1c131c1850224aae96078fe"); // Set AppKey
-    delay(100);
-
-    Serial1.println("AT+CAPPEUI=229a2a57ea7bfdf7"); // Set AppEUI
-    delay(100);
-
-    Serial1.println("AT+CDEVEUI=5daa5fd696722092"); // Set DevEUI
-    delay(100);
-
-    Serial1.println("AT+CAPPKEY?"); // Check AppKey
-    delay(100);
-
-    Serial1.println("AT+CAPPEUI?"); // Check AppEUI
-    delay(100);
-
-    Serial1.println("AT+CDEVEUI?"); // Check DevEUI
-    delay(100);
-
-    // Serial1.println("AT+CULDLMODE=2");
-    // delay(100);
-
-    Serial1.println("AT+CCLASS=0"); // Set Class A
-    delay(100);
-
-    Serial1.println("AT+CJOINMODE=0"); // Set OTAA mode
-    delay(100);
-
-    // Serial1.println("AT+CSTATUS?"); // Check status
-    // delay(100);
-
-    Serial1.println("AT+CJOIN=1,0,8,8"); // Join
-    delay(30 * 1000);
-
-    String response = "";
-    while (Serial1.available()) {
-        response += (char)Serial1.read();
-    }
-
-    if (response.indexOf("+CJOIN:OK") != -1) {
-        SerialUSB.println(F("E78-915LN22S LoRaWAN OTAA Join successful!"));
-    } else {
-        SerialUSB.println(F("E78-915LN22S OTAA Join failed!"));
-    }
 }
 
 void sendDataWithLMIC(const char *data)
@@ -630,55 +556,40 @@ void sendDataWithLMIC(const char *data)
     }
 }
 
-void sendDataWithAT(const char* data) {
-    // 确定原始数据长度（以字节为单位）
-    int dataLength = strlen(data);
+// Telemetry size is very important, try to keep it lower than 51 bytes. Always lower is better.
+void sendLoRaWANPacket()
+{
+    if (telemetry.getSize() < 54)
+    {
+        // DR1 (SF9 BW125kHz) max payload size is 53 bytes.
+        LMIC_setDrTxpow(1, KEEP_TXPOWADJ);
+    }
+    else if (telemetry.getSize() < 126)
+    {
+        // DR2 (SF8 BW125kHz) max payload size is 125 bytes.
+        LMIC_setDrTxpow(2, KEEP_TXPOWADJ);
+    }
+    else
+    {
+        // DR3 (SF7 BW125kHz) max payload size is 222 bytes.
+        LMIC_setDrTxpow(3, KEEP_TXPOWADJ);
+    }
+    
+    
+    LMIC_selectChannel(channelNoFor2ndSubBand);
 
-    // 如果数据长度为 0，发送空包
-    if (dataLength == 0) {
-        Serial1.println("AT+DTRX=0,0,0,0");
-        delay(100);
-        SerialUSB.println(F("Sent empty data packet"));
-        return;
+    ++channelNoFor2ndSubBand;
+    if (channelNoFor2ndSubBand > 7)
+    {
+        channelNoFor2ndSubBand = 0;
     }
 
-    // 将数据转换为16进制格式（2个字符表示1个字节）
-    String hexPayload = "";
-    for (int i = 0; i < dataLength; i++) {
-        char hexByte[3];  // 每字节两位16进制，外加1个空字符
-        sprintf(hexByte, "%02X", (unsigned char)data[i]);
-        hexPayload += hexByte;
-    }
+    LMIC_setAdrMode(false);
+    LMIC_setLinkCheckMode(0);
 
-    // 检查长度是否合法（LoRaWAN规范的最大长度）
-    if (dataLength > 255) {  // 根据具体设备要求调整最大值
-        SerialUSB.println(F("Error: Data length exceeds maximum allowed limit"));
-        return;
-    }
-
-    // 构建 AT 指令
-    Serial1.print("AT+DTRX=0,0,");   // 确认模式0，不重传
-    Serial1.print(dataLength);       // 数据长度
-    Serial1.print(",");              // 逗号分隔符
-    Serial1.println(hexPayload);     // 发送16进制负载数据
-
-    // 等待响应
-    delay(100);
-
-    // 接收设备响应
-    String response = "";
-    while (Serial1.available()) {
-        response += (char)Serial1.read();
-    }
-
-    // 检查响应内容
-    if (response.indexOf("OK+SEND") != -1) {
-        SerialUSB.println(F("Packet sent successfully with AT commands"));
-    } else if (response.indexOf("ERR") != -1) {
-        SerialUSB.println(F("Error: Sending failed. Response: "));
-        SerialUSB.println(response);
-    } else {
-        SerialUSB.println(F("Error: No valid response from device"));
-    }
+    LMIC_setTxData2(1, telemetry.getBuffer(), telemetry.getSize(), 0);
+    last_packet = millis();
+    txCount++;
+    packetQueued = true;
+    SerialUSB.print(F("Packet queued..."));
 }
-

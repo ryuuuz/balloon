@@ -190,16 +190,36 @@ void setup()
     // Initialize the I2C library
     Wire.begin();
 
-    // Check if sensor is connected and initialize
-    // Address is optional (defaults to 0x47)
-    while (pressureSensor.beginI2C(i2cAddress) != BMP5_OK)
-    {
-        // Not connected, inform user
-        SerialUSB.println("Error: BMP581 not connected, check wiring and I2C address!");
+// Initialize sensor connection with retry mechanism
+int8_t err = BMP5_OK;
+unsigned long retryInterval = 1000;  // Retry interval in milliseconds
+int retryCount = 10;  // Number of retries before giving up
 
-        // Wait a bit to see if connection is established
-        delay(1000);
+// Try initializing the sensor
+while (retryCount > 0) {
+    err = pressureSensor.beginI2C(i2cAddress);
+    
+    if (err == BMP5_OK) {
+        break;  // Successfully connected, exit loop
     }
+
+    // Not connected, inform user and retry
+    SerialUSB.println("Error: BMP581 not connected, check wiring and I2C address!");
+    SerialUSB.print("Error code: ");
+    SerialUSB.println(err);
+    
+    retryCount--;
+    if (retryCount > 0) {
+        SerialUSB.print("Retrying in ");
+        SerialUSB.print(retryInterval / 1000);
+        SerialUSB.println(" seconds...");
+        delay(retryInterval);
+    }
+}
+
+if (err != BMP5_OK) {
+    SerialUSB.println("Failed to initialize BMP581 sensor after multiple attempts.");
+}
 
     SerialUSB.println("BMP581 connected!");
 
@@ -252,7 +272,6 @@ void loop()
     fetchGNSSData();
 
     processLMICEvents(); // Process the LMIC event queue
-    // sendDataWithLMIC("Hello, LMIC!");
     updateTelemetry();
     sendLoRaWANPacket();
 
@@ -357,11 +376,34 @@ void fetchGNSSData()
     // myGNSS.checkCallbacks(); // Check if any callbacks are waiting to be processed.
 }
 
+float readBatt()
+{
+
+    float R1 = 560000.0; // 560K
+    float R2 = 100000.0; // 100K
+    float value = 0.0f;
+
+    do
+    {
+        value = analogRead(BattPin);
+        value += analogRead(BattPin);
+        value += analogRead(BattPin);
+        value = value / 3.0f;
+        value = (value * 3.3) / 1024.0f;
+        value = value / (R2 / (R1 + R2));
+    } while (value > 20.0);
+    value = 5;
+
+    return value;
+}
+
 void updateTelemetry()
 {
     // Get measurements from the sensor
     bmp5_sensor_data data = {0, 0};
     int8_t err = pressureSensor.getSensorData(&data);
+
+    voltage = readBatt();
 
     float tempAltitudeLong = 0;  // meters or feet
     float tempAltitudeShort = 0; // km or miles
@@ -500,6 +542,8 @@ void processLMICEvents()
     os_runstep();
 }
 
+#define CFG_DEBUG
+
 void initAndJoinWithLMIC()
 {
     SerialUSB.println(F("Initializing E22-900M22S (LMIC)..."));
@@ -526,34 +570,6 @@ void initAndJoinWithLMIC()
 
     OTAAJoinStatus = true;
     SerialUSB.println(F("LoRaWAN OTAA Join successful!"));
-}
-
-void sendDataWithLMIC(const char *data)
-{
-    LMIC_setDrTxpow(1, KEEP_TXPOWADJ);
-
-    LMIC_selectChannel(channelNoFor2ndSubBand);
-
-    ++channelNoFor2ndSubBand;
-    if (channelNoFor2ndSubBand > 7)
-    {
-        channelNoFor2ndSubBand = 0;
-    }
-    SerialUSB.print(F("Channel: "));
-    SerialUSB.println(channelNoFor2ndSubBand);
-
-    LMIC_setAdrMode(false);
-    LMIC_setLinkCheckMode(0);
-
-    if ((LMIC.opmode & OP_TXRXPEND) != 0)
-    {
-        SerialUSB.println(F("Transmission pending, cannot queue new data"));
-    }
-    else
-    {
-        LMIC_setTxData2(8, (uint8_t *)data, strlen(data), 0);
-        SerialUSB.println(F("Packet queued with LMIC"));
-    }
 }
 
 // Telemetry size is very important, try to keep it lower than 51 bytes. Always lower is better.
@@ -583,6 +599,9 @@ void sendLoRaWANPacket()
     {
         channelNoFor2ndSubBand = 0;
     }
+
+    SerialUSB.print(F("Channel: "));
+    SerialUSB.println(channelNoFor2ndSubBand);
 
     LMIC_setAdrMode(false);
     LMIC_setLinkCheckMode(0);

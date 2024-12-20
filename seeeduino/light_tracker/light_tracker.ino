@@ -52,6 +52,24 @@ boolean OTAAJoinStatus = false; // do not change this.
 int channelNoFor2ndSubBand = 0; // do not change this. Used for US915 and AU915 / TTN and Helium
 uint32_t last_packet = 0;       // do not change this. Timestamp of last packet sent.
 
+
+// ABP
+// LoRaWAN NwkSKey, network session key (Big Endian)
+static const PROGMEM u1_t NWKSKEY[16] = { 
+    0x87, 0x86, 0xD5, 0x5B, 0x25, 0x1B, 0xDD, 0x24, 
+    0x81, 0x4A, 0xDE, 0x81, 0x14, 0xA2, 0x4E, 0x0C 
+};
+
+// LoRaWAN AppSKey, application session key (Big Endian)
+static const u1_t PROGMEM APPSKEY[16] = { 
+    0x26, 0xF1, 0xB3, 0x9E, 0x3E, 0x65, 0xB2, 0x6A, 
+    0xCF, 0xA3, 0x8E, 0xB3, 0xD2, 0x7B, 0x50, 0xE9 
+};
+
+// LoRaWAN end-device address (DevAddr)
+static const u4_t DEVADDR = 0x019a39b7 ; // <-- Change this address for every node!
+
+
 uint8_t measurementSystem = 0; // 0 for metric (meters, km, Celcius, etc.), 1 for imperial (feet, mile, Fahrenheit,etc.)
 
 // try to keep telemetry size smaller than 51 bytes if possible. Default telemetry size is 37 bytes.
@@ -173,6 +191,9 @@ void processLMICEvents();
 void initAndJoinWithLMIC();
 void sendDataWithLMIC(const char *data);
 
+void initThroughABP();
+
+
 // the setup function runs once when you press reset or power the board
 void setup()
 {
@@ -190,36 +211,36 @@ void setup()
     // Initialize the I2C library
     Wire.begin();
 
-// Initialize sensor connection with retry mechanism
-int8_t err = BMP5_OK;
-unsigned long retryInterval = 1000;  // Retry interval in milliseconds
-int retryCount = 10;  // Number of retries before giving up
+    // Initialize sensor connection with retry mechanism
+    int8_t err = BMP5_OK;
+    unsigned long retryInterval = 1000;  // Retry interval in milliseconds
+    int retryCount = 10;  // Number of retries before giving up
 
-// Try initializing the sensor
-while (retryCount > 0) {
-    err = pressureSensor.beginI2C(i2cAddress);
-    
-    if (err == BMP5_OK) {
-        break;  // Successfully connected, exit loop
+    // Try initializing the sensor
+    while (retryCount > 0) {
+        err = pressureSensor.beginI2C(i2cAddress);
+        
+        if (err == BMP5_OK) {
+            break;  // Successfully connected, exit loop
+        }
+
+        // Not connected, inform user and retry
+        SerialUSB.println("Error: BMP581 not connected, check wiring and I2C address!");
+        SerialUSB.print("Error code: ");
+        SerialUSB.println(err);
+        
+        retryCount--;
+        if (retryCount > 0) {
+            SerialUSB.print("Retrying in ");
+            SerialUSB.print(retryInterval / 1000);
+            SerialUSB.println(" seconds...");
+            delay(retryInterval);
+        }
     }
 
-    // Not connected, inform user and retry
-    SerialUSB.println("Error: BMP581 not connected, check wiring and I2C address!");
-    SerialUSB.print("Error code: ");
-    SerialUSB.println(err);
-    
-    retryCount--;
-    if (retryCount > 0) {
-        SerialUSB.print("Retrying in ");
-        SerialUSB.print(retryInterval / 1000);
-        SerialUSB.println(" seconds...");
-        delay(retryInterval);
+    if (err != BMP5_OK) {
+        SerialUSB.println("Failed to initialize BMP581 sensor after multiple attempts.");
     }
-}
-
-if (err != BMP5_OK) {
-    SerialUSB.println("Failed to initialize BMP581 sensor after multiple attempts.");
-}
 
     SerialUSB.println("BMP581 connected!");
 
@@ -259,7 +280,10 @@ if (err != BMP5_OK) {
     initGNSS();
 
     // Initialize and join with LMIC
-    initAndJoinWithLMIC();
+    // initAndJoinWithLMIC();
+
+    // Initialize through ABP
+    initThroughABP();
 }
 
 void fetchBMP581Data();
@@ -392,7 +416,6 @@ float readBatt()
         value = (value * 3.3) / 1024.0f;
         value = value / (R2 / (R1 + R2));
     } while (value > 20.0);
-    value = 5;
 
     return value;
 }
@@ -542,8 +565,6 @@ void processLMICEvents()
     os_runstep();
 }
 
-#define CFG_DEBUG
-
 void initAndJoinWithLMIC()
 {
     SerialUSB.println(F("Initializing E22-900M22S (LMIC)..."));
@@ -570,6 +591,28 @@ void initAndJoinWithLMIC()
 
     OTAAJoinStatus = true;
     SerialUSB.println(F("LoRaWAN OTAA Join successful!"));
+}
+
+void initThroughABP() {
+    SerialUSB.println(F("Initializing E22-900M22S (LMIC) through ABP..."));
+
+    os_init(nullptr); // LMIC initialization
+    LMIC_reset();
+
+    // Set the session keys
+    LMIC_setSession(0x1, DEVADDR, NWKSKEY, APPSKEY);
+
+    // Set the data rate and transmit power
+    LMIC_setDrTxpow(0, KEEP_TXPOWADJ);
+
+    // Disable ADR
+    LMIC_setAdrMode(false);
+
+    // Disable link check validation
+    LMIC_setLinkCheckMode(0);
+
+    OTAAJoinStatus = true;
+    SerialUSB.println(F("LoRaWAN ABP initialization successful!"));
 }
 
 // Telemetry size is very important, try to keep it lower than 51 bytes. Always lower is better.

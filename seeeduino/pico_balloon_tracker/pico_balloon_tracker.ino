@@ -44,7 +44,7 @@ static const u1_t PROGMEM APPEUI[8] = {0xd5, 0x04, 0xb4, 0xb6, 0x78, 0x44, 0x1d,
 static const uint8_t PROGMEM APPKEY[16] = {0x6d, 0xc5, 0xdd, 0x7b, 0x1b, 0x5d, 0x47, 0x76, 0x32, 0x39, 0x19, 0xcb, 0x7f, 0x94, 0xd4, 0x42}; // Helium or TTN//*****************************************************************************************************/
 
 //************************** LoRaWAN Settings ********************
-const unsigned TX_INTERVAL = 60000; // Schedule TX every this many miliseconds (might become longer due to duty cycle limitations).
+const unsigned TX_INTERVAL = 6000; // Schedule TX every this many miliseconds (might become longer due to duty cycle limitations).
 
 // try to keep telemetry size smaller than 51 bytes if possible. Default telemetry size is 37 bytes.
 CayenneLPP telemetry(37);
@@ -173,7 +173,7 @@ void loop()
                     lastLoRaWANRegion = Lorawan_Geofence_region_code;
                 }
 
-                if (!OTAAJoinStatus && (Lorawan_Geofence_no_tx == 0))
+                if (!OTAAJoinStatus)
                 {
                     SerialUSB.println(F("LoRaWAN OTAA Login initiated..."));
                     startJoining();
@@ -197,7 +197,7 @@ void loop()
                     delay(500);
                 }
 
-                if (Lorawan_Geofence_no_tx == 0)
+                if (1 || Lorawan_Geofence_no_tx == 0)
                 {
                     sendLoRaWANPacket();
                     SerialUSB.println(F("LoRaWAN packet sent.."));
@@ -308,6 +308,7 @@ void startJoining()
     }
     else
     {
+
 
         LMIC_setDrTxpow(2, KEEP_TXPOWADJ);
     }
@@ -448,6 +449,9 @@ void sendLoRaWANPacket()
         }
     }
 
+    SerialUSB.println("PA14: " + String(digitalRead(4)));
+    SerialUSB.println("PA17: " + String(digitalRead(13)));
+
     LMIC_setAdrMode(false);
     LMIC_setLinkCheckMode(0);
 
@@ -461,9 +465,9 @@ void sendLoRaWANPacket()
 void setupGPS_HP303B()
 {
     GpsON;
-    delay(100);
+    delay(1000);
     Wire.begin();
-    hp303b.begin(0x76);
+    // hp303b.begin(0x76);
     Wire.setClock(400000);
 
     if (myGPS.begin() == false) // Connect to the Ublox module using Wire port
@@ -749,7 +753,7 @@ int32_t readTemperature()
 
     int16_t oversampling = 7;
     int32_t temperature = 99999;
-    hp303b.measureTempOnce(temperature, oversampling);
+    // hp303b.measureTempOnce(temperature, oversampling);
     return temperature;
 }
 
@@ -758,6 +762,6 @@ int32_t readPressure()
 
     int16_t oversampling = 7;
     int32_t pressure = 0;
-    hp303b.measurePressureOnce(pressure, oversampling);
+    // hp303b.measurePressureOnce(pressure, oversampling);
     return pressure;
 }

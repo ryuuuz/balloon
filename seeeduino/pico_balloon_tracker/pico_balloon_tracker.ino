@@ -6,6 +6,9 @@
 #include <MemoryFree.h>;
 #include <CayenneLPP.h>
 
+// #define USE_OTAA // Comment out this line if you want to use ABP
+#define USE_HP303B // Comment out this line if you do not have HP303B sensor
+
 // SX1262 has the following connections:
 #define nssPin 8
 #define rstPin 9
@@ -62,6 +65,30 @@ uint8_t lastLoRaWANRegion = _REGCODE_UNDEF; // do not change this
 boolean OTAAJoinStatus = false; // do not change this.
 int channelNoFor2ndSubBand = 8; // do not change this. Used for US915 and AU915 / TTN and Helium
 uint32_t last_packet = 0;       // do not change this. Timestamp of last packet sent.
+
+// ABP
+
+// LoRaWAN end-device address (DevAddr)
+static const u4_t DEVADDR = 0x003cac61; // <-- Change this address for every node!
+
+// LoRaWAN NwkSKey, network session key (Big Endian)
+static const char NWKSKEY_STR[] = "7782c4581f827ea7155516a7dcb4b9ae";
+u1_t NWKSKEY[16];
+// LoRaWAN AppSKey, application session key (Big Endian)
+static const char APPSKEY_STR[] = "a1383a00a3b4f8cb44453bb0d47bbfef";
+u1_t APPSKEY[16];
+
+// Function to convert a hex string to byte array
+void hexStringToBytes(const char* hexStr, u1_t* bytes) {
+    size_t len = strlen(hexStr);
+    for (size_t i = 0; i < len / 2; i++) {
+        char byteStr[3] = { hexStr[2 * i], hexStr[2 * i + 1], '\0' };
+        bytes[i] = (u1_t) strtol(byteStr, NULL, 16);
+    }
+}
+
+// END ABP
+
 
 // pinmap for SX1262 LoRa module
 #if !defined(USE_STANDARD_PINMAP)
@@ -175,9 +202,16 @@ void loop()
 
                 if (!OTAAJoinStatus)
                 {
+                    #ifdef USE_OTAA
                     SerialUSB.println(F("LoRaWAN OTAA Login initiated..."));
                     startJoining();
                     SerialUSB.println(F("LoRaWAN OTAA Login success..."));
+                    #else
+                    SerialUSB.println(F("LoRaWAN ABP Login initiated..."));
+                    initThroughABP();
+                    SerialUSB.println(F("LoRaWAN ABP Login success..."));
+                    #endif
+
                     OTAAJoinStatus = true;
                     freeMem();
                 }
@@ -327,6 +361,45 @@ void startJoining()
     }
 }
 
+void initThroughABP() {
+    SerialUSB.println(F("Initializing E22-900M22S (LMIC) through ABP..."));
+
+    hexStringToBytes(NWKSKEY_STR, NWKSKEY);
+    hexStringToBytes(APPSKEY_STR, APPSKEY);
+
+    SerialUSB.print(F("NWKSKEY: "));
+    for (int i = 0; i < 16; i++) {
+        SerialUSB.print(NWKSKEY[i], HEX);
+        SerialUSB.print(" ");
+    }
+    SerialUSB.println();
+
+    SerialUSB.print(F("APPSKEY: "));
+    for (int i = 0; i < 16; i++) {
+        SerialUSB.print(APPSKEY[i], HEX);
+        SerialUSB.print(" ");
+    }
+    SerialUSB.println();
+
+    os_init(nullptr); // LMIC initialization
+    LMIC_reset();
+
+    // Set the session keys
+    LMIC_setSession(0x1, DEVADDR, NWKSKEY, APPSKEY);
+
+    // Set the data rate and transmit power
+    LMIC_setDrTxpow(0, KEEP_TXPOWADJ);
+
+    // Disable ADR
+    LMIC_setAdrMode(false);
+
+    // Disable link check validation
+    LMIC_setLinkCheckMode(0);
+
+    OTAAJoinStatus = true;
+    SerialUSB.println(F("LoRaWAN ABP initialization successful!"));
+}
+
 // Telemetry size is very important, try to keep it lower than 51 bytes. Always lower is better.
 void sendLoRaWANPacket()
 {
@@ -467,7 +540,11 @@ void setupGPS_HP303B()
     GpsON;
     delay(1000);
     Wire.begin();
-    // hp303b.begin(0x76);
+
+    #ifdef USE_HP303B
+    hp303b.begin(0x76);
+    #endif
+    
     Wire.setClock(400000);
 
     if (myGPS.begin() == false) // Connect to the Ublox module using Wire port
@@ -753,7 +830,11 @@ int32_t readTemperature()
 
     int16_t oversampling = 7;
     int32_t temperature = 99999;
-    // hp303b.measureTempOnce(temperature, oversampling);
+
+    #ifdef USE_HP303B
+    hp303b.measureTempOnce(temperature, oversampling);
+    #endif
+
     return temperature;
 }
 
@@ -762,6 +843,10 @@ int32_t readPressure()
 
     int16_t oversampling = 7;
     int32_t pressure = 0;
-    // hp303b.measurePressureOnce(pressure, oversampling);
+
+    #ifdef USE_HP303B
+    hp303b.measurePressureOnce(pressure, oversampling);
+    #endif
+
     return pressure;
 }

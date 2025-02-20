@@ -17,10 +17,9 @@ SFE_UBLOX_GNSS myGNSS;
 
 #include <basicmac.h>
 #include <hal/hal.h>
+#include <LightTrackerGeofence.h>
 
 #include <CayenneLPP.h>
-
-#define _REGCODE_US915 3
 
 // SX1262 has the following connections:
 #define nssPin 8
@@ -33,26 +32,14 @@ SFE_UBLOX_GNSS myGNSS;
 #define GpsON digitalWrite(GpsPwr, LOW);
 #define GpsOFF digitalWrite(GpsPwr, HIGH);
 
-#define BMP_INT 31
+#define DEVMODE // Development mode. Uncomment to enable for debugging.
 
-// This EUI must be in little-endian format, so least-significant-byte (lsb)
-// first. When copying an EUI from Helium Console or ttnctl output, this means to reverse the bytes.
+int channelNoFor2ndSubBand = 0; // do not change this. Used for US915 and AU915 / TTN and Helium
+uint32_t last_packet = 0;       // do not change this. Timestamp of last packet sent.
 
 static const u1_t PROGMEM DEVEUI[8] = {0x06, 0xef, 0xd3, 0x85, 0xcb, 0xf6, 0xc1, 0x2b}; // helium or ttn
 
-// This EUI must be in little-endian format, so least-significant-byte (lsb)
-// first. When copying an EUI from Helium Console or ttnctl output, this means to reverse the bytes.
-
 static const u1_t PROGMEM APPEUI[8] = {0x53, 0xb8, 0x67, 0xb0, 0xd3, 0xae, 0xe1, 0x38}; // helium or ttn
-
-// This key should be in big endian format (or, since it is not really a
-// number but a block of memory, endianness does not really apply). In practice, a key taken from Helium Console or ttnctl can be copied as-is.
-
-static const u1_t PROGMEM APPKEY[16] = {0x74, 0x5b, 0x9b, 0x1a, 0xce, 0xe7, 0xb8, 0xa2, 0xa9, 0x8f, 0x48, 0x62, 0x7a, 0x16, 0x49, 0x88}; // helium or ttn
-
-boolean OTAAJoinStatus = false; // do not change this.
-int channelNoFor2ndSubBand = 0; // do not change this. Used for US915 and AU915 / TTN and Helium
-uint32_t last_packet = 0;       // do not change this. Timestamp of last packet sent.
 
 
 // ABP
@@ -77,6 +64,16 @@ uint8_t measurementSystem = 0; // 0 for metric (meters, km, Celcius, etc.), 1 fo
 // try to keep telemetry size smaller than 51 bytes if possible. Default telemetry size is 37 bytes.
 CayenneLPP telemetry(37);
 
+// The LoRaWAN region to use, automatically selected based on your location. So GPS fix is necesarry
+u1_t os_getRegion (void) { return Lorawan_Geofence_region_code; } //do not change this
+
+// GEOFENCE 
+uint8_t Lorawan_Geofence_no_tx  = 0; //do not change this
+uint8_t Lorawan_Geofence_region_code = _REGCODE_UNDEF; //do not change this
+uint8_t Lorawan_Geofence_special_region_code = _REGCODE_UNDEF; //do not change this
+
+uint8_t lastLoRaWANRegion = _REGCODE_UNDEF; //do not change this
+
 // pinmap for SX1262 LoRa module
 const lmic_pinmap lmic_pins = {
     .nss = nssPin,
@@ -92,8 +89,6 @@ const lmic_pinmap lmic_pins = {
 int txCount = 1;
 float voltage = 0;
 boolean packetQueued = false;
-
-#define SETB_PIN 43
 
 #include "variant.h"
 
@@ -139,59 +134,10 @@ uint8_t i2cAddress = BMP581_I2C_ADDRESS_DEFAULT; // 0x47
 // uint8_t i2cAddress = BMP581_I2C_ADDRESS_SECONDARY; // 0x46
 
 void initGNSS();
-
-// Callback: printPVTdata will be called when new NAV PVT data arrives
-// See u-blox_structs.h for the full definition of UBX_NAV_PVT_data_t
-//         _____  You can use any name you like for the callback. Use the same name when you call setAutoPVTcallback
-//        /                  _____  This _must_ be UBX_NAV_PVT_data_t
-//        |                 /               _____ You can use any name you like for the struct
-//        |                 |              /
-//        |                 |              |
-void printPVTdata(UBX_NAV_PVT_data_t *ubxDataStruct)
-{
-    SerialUSB.println();
-
-    SerialUSB.print(F("Time: "));         // Print the time
-    uint8_t hms = ubxDataStruct->hour; // Print the hours
-    if (hms < 10)
-        SerialUSB.print(F("0")); // Print a leading zero if required
-    SerialUSB.print(hms);
-    SerialUSB.print(F(":"));
-    hms = ubxDataStruct->min; // Print the minutes
-    if (hms < 10)
-        SerialUSB.print(F("0")); // Print a leading zero if required
-    SerialUSB.print(hms);
-    SerialUSB.print(F(":"));
-    hms = ubxDataStruct->sec; // Print the seconds
-    if (hms < 10)
-        SerialUSB.print(F("0")); // Print a leading zero if required
-    SerialUSB.print(hms);
-    SerialUSB.print(F("."));
-    uint32_t millisecs = ubxDataStruct->iTOW % 1000; // Print the milliseconds
-    if (millisecs < 100)
-        SerialUSB.print(F("0")); // Print the trailing zeros correctly
-    if (millisecs < 10)
-        SerialUSB.print(F("0"));
-    SerialUSB.print(millisecs);
-
-    int32_t latitude = ubxDataStruct->lat; // Print the latitude
-    SerialUSB.print(F(" Lat: "));
-    SerialUSB.print(latitude);
-
-    int32_t longitude = ubxDataStruct->lon; // Print the longitude
-    SerialUSB.print(F(" Long: "));
-    SerialUSB.print(longitude);
-    SerialUSB.print(F(" (degrees * 10^-7)"));
-
-    int32_t altitude = ubxDataStruct->hMSL; // Print the height above mean sea level
-    SerialUSB.print(F(" Height above MSL: "));
-    SerialUSB.print(altitude);
-    SerialUSB.println(F(" (mm)"));
-}
+void initBMP581();
 
 void processLMICEvents();
 void initAndJoinWithLMIC();
-void sendDataWithLMIC(const char *data);
 
 void initThroughABP();
 
@@ -248,55 +194,20 @@ void setup()
     }
 
     initGNSS();
-
-    // Initialize sensor connection with retry mechanism
-    int8_t err = BMP5_OK;
-    unsigned long retryInterval = 1000;  // Retry interval in milliseconds
-    int retryCount = 10;  // Number of retries before giving up
-
-    // Try initializing the sensor
-    while (retryCount > 0) {
-        err = pressureSensor.beginI2C(i2cAddress);
-        
-        if (err == BMP5_OK) {
-            break;  // Successfully connected, exit loop
-        }
-
-        // Not connected, inform user and retry
-        SerialUSB.println("Error: BMP581 not connected, check wiring and I2C address!");
-        SerialUSB.print("Error code: ");
-        SerialUSB.println(err);
-        
-        retryCount--;
-        if (retryCount > 0) {
-            SerialUSB.print("Retrying in ");
-            SerialUSB.print(retryInterval / 1000);
-            SerialUSB.println(" seconds...");
-            delay(retryInterval);
-        }
-    }
-
-    if (err != BMP5_OK) {
-        SerialUSB.println("Failed to initialize BMP581 sensor after multiple attempts.");
-    }
-
-    SerialUSB.println("BMP581 connected!");
-
-    // Initialize and join with LMIC
-    // initAndJoinWithLMIC();
+    initBMP581();
 
     // Initialize through ABP
     initThroughABP();
 }
 
-void fetchBMP581Data();
 void fetchGNSSData();
+void fetchBMP581Data();
 
 // the loop function runs over and over again forever
 void loop()
 {
-    fetchBMP581Data();
     fetchGNSSData();
+    fetchBMP581Data();
 
     processLMICEvents(); // Process the LMIC event queue
     updateTelemetry();
@@ -343,28 +254,44 @@ void initGNSS()
     setupUBloxDynamicModel();
 }
 
-void fetchBMP581Data()
+void initBMP581()
 {
-    // Get measurements from the sensor
-    bmp5_sensor_data data = {0, 0};
-    int8_t err = pressureSensor.getSensorData(&data);
+    // Initialize sensor connection with retry mechanism
+    int8_t err = BMP5_OK;
+    unsigned long retryInterval = 1000; // Retry interval in milliseconds
+    int retryCount = 10;                // Number of retries before giving up
 
-    // Check whether data was acquired successfully
-    if (err == BMP5_OK)
+    // Try initializing the sensor
+    while (retryCount > 0)
     {
-        // Acquisistion succeeded, print temperature and pressure
-        SerialUSB.print("Temperature (C): ");
-        SerialUSB.print(data.temperature);
-        SerialUSB.print("\t\t");
-        SerialUSB.print("Pressure (Pa): ");
-        SerialUSB.println(data.pressure);
-    }
-    else
-    {
-        // Acquisition failed, most likely a communication error (code -2)
-        SerialUSB.print("Error getting data from sensor! Error code: ");
+        err = pressureSensor.beginI2C(i2cAddress);
+
+        if (err == BMP5_OK)
+        {
+            break; // Successfully connected, exit loop
+        }
+
+        // Not connected, inform user and retry
+        SerialUSB.println("Error: BMP581 not connected, check wiring and I2C address!");
+        SerialUSB.print("Error code: ");
         SerialUSB.println(err);
+
+        retryCount--;
+        if (retryCount > 0)
+        {
+            SerialUSB.print("Retrying in ");
+            SerialUSB.print(retryInterval / 1000);
+            SerialUSB.println(" seconds...");
+            delay(retryInterval);
+        }
     }
+
+    if (err != BMP5_OK)
+    {
+        SerialUSB.println("Failed to initialize BMP581 sensor after multiple attempts.");
+    }
+
+    SerialUSB.println("BMP581 connected!");
 }
 
 void fetchGNSSData()
@@ -405,6 +332,30 @@ void fetchGNSSData()
 
     // myGNSS.checkUblox();     // Check for the arrival of new data and process it.
     // myGNSS.checkCallbacks(); // Check if any callbacks are waiting to be processed.
+}
+
+void fetchBMP581Data()
+{
+    // Get measurements from the sensor
+    bmp5_sensor_data data = {0, 0};
+    int8_t err = pressureSensor.getSensorData(&data);
+
+    // Check whether data was acquired successfully
+    if (err == BMP5_OK)
+    {
+        // Acquisistion succeeded, print temperature and pressure
+        SerialUSB.print("Temperature (C): ");
+        SerialUSB.print(data.temperature);
+        SerialUSB.print("\t\t");
+        SerialUSB.print("Pressure (Pa): ");
+        SerialUSB.println(data.pressure);
+    }
+    else
+    {
+        // Acquisition failed, most likely a communication error (code -2)
+        SerialUSB.print("Error getting data from sensor! Error code: ");
+        SerialUSB.println(err);
+    }
 }
 
 float readBatt()
@@ -470,10 +421,26 @@ void updateTelemetry()
     telemetry.addAnalogInput(8, tempAltitudeShort);                                                             // kilometers or miles
 }
 
-u1_t os_getRegion(void) { return _REGCODE_US915; }
+void checkRegionByLocation() {
+#ifdef DEVMODE
+    float tempLat = 37.315000;
+    float tempLong = -122.031200;
+#else
+    float tempLat = myGNSS.getLatitude() / 10000000.f;
+    float tempLong = myGNSS.getLongitude() / 10000000.f;
+#endif
+    
+    // Check if the current location is inside the geofence
+    // modify: Lorawan_Geofence_no_tx 
+    //         Lorawan_Geofence_region_code
+	//	       Lorawan_Geofence_special_region_code
+    Lorawan_Geofence_position(tempLat,tempLong);
+    
+  }
+
 void os_getJoinEui(u1_t *buf) { memcpy_P(buf, APPEUI, 8); }
 void os_getDevEui(u1_t *buf) { memcpy_P(buf, DEVEUI, 8); }
-void os_getNwkKey(u1_t *buf) { memcpy_P(buf, APPKEY, 16); }
+void os_getNwkKey(u1_t *buf) { memcpy_P(buf, NWKSKEY, 16); }
 
 void onLmicEvent(ev_t ev)
 {
@@ -572,34 +539,6 @@ void processLMICEvents()
     os_runstep();
 }
 
-void initAndJoinWithLMIC()
-{
-    SerialUSB.println(F("Initializing E22-900M22S (LMIC)..."));
-
-    os_init(nullptr); // LMIC initialization
-    LMIC_reset();
-
-    // Start OTAA join
-    LMIC_startJoining();
-    SerialUSB.println(F("Starting OTAA join..."));
-
-    SerialUSB.println(F("Region US915"));
-    // LMIC_setDrTxpow(0, KEEP_TXPOWADJ);
-    // LMIC_selectChannel(7);
-
-    // LMIC_setAdrMode(false);
-    // LMIC_setLinkCheckMode(0);
-
-    // Wait for OTAA join to complete
-    while (LMIC.opmode & OP_JOINING)
-    {
-        processLMICEvents();
-    }
-
-    OTAAJoinStatus = true;
-    SerialUSB.println(F("LoRaWAN OTAA Join successful!"));
-}
-
 void initThroughABP() {
     SerialUSB.println(F("Initializing E22-900M22S (LMIC) through ABP..."));
 
@@ -609,38 +548,168 @@ void initThroughABP() {
     // Set the session keys
     LMIC_setSession(0x1, DEVADDR, NWKSKEY, APPSKEY);
 
-    // Set the data rate and transmit power
-    LMIC_setDrTxpow(0, KEEP_TXPOWADJ);
+    //DO NOT CHANGE following code blocks unless you know what you are doing :)
 
+    //Europe
+    if(Lorawan_Geofence_region_code == _REGCODE_EU868) {
+
+        SerialUSB.println(F("Region EU868"));
+  
+        //A little hack for Russian region since BasicMAC does not officially support RU864-870. Tested on TTN and worked..   
+        if(Lorawan_Geofence_special_region_code == _REGCODE_RU864) {
+          SerialUSB.println(F("Special Region RU864"));
+          LMIC_setupChannel(0, 868900000, DR_RANGE_MAP(0, 2));
+          LMIC_setupChannel(1, 869100000, DR_RANGE_MAP(0, 2));      
+        } 
+         //DR2 (SF10 BW125kHz)
+         //SF10 is better/optimum spreading factor for high altitude balloons
+         LMIC_setDrTxpow(2,KEEP_TXPOWADJ);        
+  
+       //Japan, Malaysia, Singapore, Brunei, Cambodia, Hong Kong, Indonesia, Laos, Taiwan, Thailand, Vietnam
+        } else if (Lorawan_Geofence_region_code == _REGCODE_AS923) {
+          SerialUSB.println(F("Region AS923"));
+          
+       //A little hack for Korean region since BasicMAC does not officially support KR920-923. Tested on TTN and worked..
+        if(Lorawan_Geofence_special_region_code == _REGCODE_KR920) {
+          SerialUSB.println(F("Special Region KR920"));        
+          LMIC_setupChannel(0, 922100000, DR_RANGE_MAP(0, 2));
+          LMIC_setupChannel(1, 922300000, DR_RANGE_MAP(0, 2));
+          LMIC_setupChannel(2, 922500000, DR_RANGE_MAP(0, 2));
+        }
+             
+         //DR2 (SF10 BW125kHz)
+         //For AS923, DR2 join only since max payload limit is 11 bytes.
+         LMIC_setDrTxpow(2,KEEP_TXPOWADJ); 
+  
+        //North and South America (Except Brazil)
+        } else if (Lorawan_Geofence_region_code == _REGCODE_US915) {
+  
+          SerialUSB.println(F("Region US915"));
+  
+         //DR0 (SF10 BW125kHz)
+         //For US915, DR0 join only since max payload limit is 11 bytes.
+         LMIC_setDrTxpow(0,KEEP_TXPOWADJ);
+         //TTN and Helium only supports second sub band (channels 8 to 15)
+         //so we should force BasicMAC to initiate a join with second sub band channels.
+         LMIC_selectChannel(8); 
+        
+        //Australia and New Zeleand   
+        } else if (Lorawan_Geofence_region_code == _REGCODE_AU915) {
+  
+           SerialUSB.println(F("Region AU915"));
+         //DR2 (SF10 BW125kHz)
+         //For AU915, DR2 join only since max payload limit is 11 bytes.
+         LMIC_setDrTxpow(2,KEEP_TXPOWADJ);
+         //TTN and Helium only supports second sub band (channels 8 to 15)
+         //so we should force BasicMAC to initiate a join with second sub band channels.
+         LMIC_selectChannel(8);
+          
+        } else {
+          
+            LMIC_setDrTxpow(2,KEEP_TXPOWADJ);  
+          
+        }
     // Disable ADR
     LMIC_setAdrMode(false);
 
     // Disable link check validation
     LMIC_setLinkCheckMode(0);
 
-    OTAAJoinStatus = true;
     SerialUSB.println(F("LoRaWAN ABP initialization successful!"));
 }
 
 // Telemetry size is very important, try to keep it lower than 51 bytes. Always lower is better.
 void sendLoRaWANPacket()
 {
-    if (telemetry.getSize() < 54)
-    {
-        // DR1 (SF9 BW125kHz) max payload size is 53 bytes.
-        LMIC_setDrTxpow(1, KEEP_TXPOWADJ);
-    }
-    else if (telemetry.getSize() < 126)
-    {
-        // DR2 (SF8 BW125kHz) max payload size is 125 bytes.
-        LMIC_setDrTxpow(2, KEEP_TXPOWADJ);
-    }
-    else
-    {
-        // DR3 (SF7 BW125kHz) max payload size is 222 bytes.
-        LMIC_setDrTxpow(3, KEEP_TXPOWADJ);
-    }
-    
+    checkRegionByLocation();
+    SerialUSB.print(F("Region: "));
+    SerialUSB.println(Lorawan_Geofence_region_code);
+
+    //Europa
+    if(Lorawan_Geofence_region_code == _REGCODE_EU868) {
+
+        if(telemetry.getSize() < 52) {
+            //DR2 (SF10 BW125kHz) max payload size is 51 bytes.
+            LMIC_setDrTxpow(2,KEEP_TXPOWADJ);          
+          } else if (telemetry.getSize() < 116){
+            //DR3 (SF9 BW125kHz) max payload size is 115 bytes.
+            LMIC_setDrTxpow(3,KEEP_TXPOWADJ);                                        
+          } else {
+            //DR4 (SF8 BW125kHz) max payload size is 222 bytes.
+            LMIC_setDrTxpow(4,KEEP_TXPOWADJ);   
+            
+            }
+      //Japan, Malaysia, Singapore, Brunei, Cambodia, Hong Kong, Indonesia, Laos, Taiwan, Thailand, Vietnam
+      }  else if (Lorawan_Geofence_region_code == _REGCODE_AS923) {
+
+        if(telemetry.getSize() < 54) {
+             //DR3 (SF9 BW125kHz) max payload size is 53 bytes.
+            LMIC_setDrTxpow(3,KEEP_TXPOWADJ);         
+          } else if (telemetry.getSize() < 126){
+            //DR4 (SF8 BW125kHz) max payload size is 125 bytes.
+            LMIC_setDrTxpow(4,KEEP_TXPOWADJ);                                        
+          } else {
+            //DR5 (SF7 BW125kHz) max payload size is 222 bytes.
+            LMIC_setDrTxpow(5,KEEP_TXPOWADJ);   
+            
+            }   
+
+      //North and South America (Except Brazil) or Australia and New Zeleand 
+      } else if (Lorawan_Geofence_region_code == _REGCODE_US915 || Lorawan_Geofence_region_code == _REGCODE_AU915) {
+
+        //North and South America (Except Brazil)
+        if (Lorawan_Geofence_region_code == _REGCODE_US915){
+          
+          if(telemetry.getSize() < 54) {
+             //DR1 (SF9 BW125kHz) max payload size is 53 bytes.
+              LMIC_setDrTxpow(1,KEEP_TXPOWADJ);         
+          } else if (telemetry.getSize() < 126){
+            //DR2 (SF8 BW125kHz) max payload size is 125 bytes.
+            LMIC_setDrTxpow(2,KEEP_TXPOWADJ);                                        
+          } else {
+            //DR3 (SF7 BW125kHz) max payload size is 222 bytes.
+            LMIC_setDrTxpow(3,KEEP_TXPOWADJ);               
+          }          
+
+        //Australia and New Zeleand                       
+        } else if (Lorawan_Geofence_region_code == _REGCODE_AU915){
+          
+          if(telemetry.getSize() < 54) {
+             //DR3 (SF9 BW125kHz) max payload size is 53 bytes.
+            LMIC_setDrTxpow(3,KEEP_TXPOWADJ);         
+          } else if (telemetry.getSize() < 126){
+            //DR4 (SF8 BW125kHz) max payload size is 125 bytes.
+            LMIC_setDrTxpow(4,KEEP_TXPOWADJ);                                        
+          } else {
+            //DR5 (SF7 BW125kHz) max payload size is 222 bytes.
+            LMIC_setDrTxpow(5,KEEP_TXPOWADJ);             
+            }          
+        }
+        
+       
+       //TTN and Helium only supports second sub band (channels 8 to 15)
+       //so we should force BasicMAC use second sub band channels.
+       LMIC_selectChannel(channelNoFor2ndSubBand);
+       
+       ++channelNoFor2ndSubBand;
+       if(channelNoFor2ndSubBand > 15) {
+          channelNoFor2ndSubBand = 8;
+        }
+     //India     
+     } else if (Lorawan_Geofence_region_code == _REGCODE_IN865) {
+
+        if(telemetry.getSize() < 52) {
+            //DR2 (SF10 BW125kHz) max payload size is 51 bytes.
+            LMIC_setDrTxpow(2,KEEP_TXPOWADJ);          
+          } else if (telemetry.getSize() < 116){
+            //DR3 (SF9 BW125kHz) max payload size is 115 bytes.
+            LMIC_setDrTxpow(3,KEEP_TXPOWADJ);                                        
+          } else {
+            //DR4 (SF8 BW125kHz) max payload size is 222 bytes.
+            LMIC_setDrTxpow(4,KEEP_TXPOWADJ);   
+            
+            }
+      }
     
     LMIC_selectChannel(channelNoFor2ndSubBand);
 

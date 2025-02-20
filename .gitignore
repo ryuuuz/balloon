@@ -16,3 +16,5 @@ output/
 
 # Ignore all files in the images folder
 scripts/images
+
+.theia/

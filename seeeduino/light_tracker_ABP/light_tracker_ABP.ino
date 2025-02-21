@@ -34,6 +34,12 @@ SFE_UBLOX_GNSS myGNSS;
 
 #define DEVMODE // Development mode. Uncomment to enable for debugging.
 
+#ifdef DEVMODE
+boolean ignoreFix = true;
+#else
+boolean ignoreFix = false;
+#endif
+
 int channelNoFor2ndSubBand = 0; // do not change this. Used for US915 and AU915 / TTN and Helium
 uint32_t last_packet = 0;       // do not change this. Timestamp of last packet sent.
 
@@ -58,8 +64,13 @@ static const u1_t PROGMEM APPSKEY[16] = {
 // LoRaWAN end-device address (DevAddr)
 static const u4_t DEVADDR = 0x019a39b7 ; // <-- Change this address for every node!
 
+boolean ABPInitStatus = false; // do not change this.
+
 
 uint8_t measurementSystem = 0; // 0 for metric (meters, km, Celcius, etc.), 1 for imperial (feet, mile, Fahrenheit,etc.)
+
+//************************** LoRaWAN Settings ********************
+const unsigned TX_INTERVAL = 60000;  // Schedule TX every this many miliseconds (might become longer due to duty cycle limitations).
 
 // try to keep telemetry size smaller than 51 bytes if possible. Default telemetry size is 37 bytes.
 CayenneLPP telemetry(37);
@@ -85,6 +96,14 @@ const lmic_pinmap lmic_pins = {
     .tcxo = LMIC_CONTROLLED_BY_DIO3,
 };
 
+//************************** uBlox GPS  Settings ********************
+boolean gpsFix=false; //do not change this.
+boolean ublox_high_alt_mode_enabled = false; //do not change this.
+boolean HardwareSetup=false; //do not change this.
+//********************************* Power Settings ******************************
+int   battWait=10;    //seconds sleep if super capacitors/batteries are below battMin (important if power source is solar panel) 
+float battMin=2.5;    // min Volts to TX. (Works with 3.3V too but 3.5V is safer) 
+float gpsMinVolt=3; //min Volts for GPS to wake up. (important if power source is solar panel) //do not change this
 //********************************* Misc Settings ******************************
 int txCount = 1;
 float voltage = 0;
@@ -133,7 +152,6 @@ BMP581 pressureSensor;
 uint8_t i2cAddress = BMP581_I2C_ADDRESS_DEFAULT; // 0x47
 // uint8_t i2cAddress = BMP581_I2C_ADDRESS_SECONDARY; // 0x46
 
-void initGNSS();
 void initBMP581();
 
 void processLMICEvents();
@@ -149,55 +167,27 @@ void setup()
     // initClock();
 
     delay(5000); // do not change this
+
+    pinMode(GpsPwr, OUTPUT);
+    GpsOFF;
     
     SerialUSB.begin(115200, SERIAL_8N1);
-    SerialUSB.println("Serial Ready!");
 
     // Initialize the LED pin
     pinMode(LED_BUILTIN, OUTPUT);
 
-    // Initialize the I2C library
-    Wire.begin();
-    SerialUSB.println("Wire Ready!");
+    // initBMP581();
 
-    // myGNSS.enableDebugging(); // Uncomment this line to enable helpful debug messages on Serial
 
-    pinMode(GpsPwr, OUTPUT);
-    GpsON;
-    delay(500);
-    
-    if (myGNSS.begin() == false) // Connect to the u-blox module using Wire port
-    {
-        SerialUSB.println(F("u-blox GNSS not detected at default I2C address. Please check wiring. Freezing."));
-        while (1)
-            ;
-    }
+    // Wait up to 5 seconds for serial to be opened, to allow catching
+    // startup messages on native USB boards (that do not reset when
+    // serial is opened).
+    unsigned long start = millis();
+    while (millis() - start < 5000 && !SerialUSB);
 
-    // Read the module info
-    if (myGNSS.getModuleInfo()) // This line is optional. getModuleName() etc. will read the info if required
-    {
-        SerialUSB.print(F("The GNSS module is: "));
-        SerialUSB.println(myGNSS.getModuleName());
-
-        SerialUSB.print(F("The firmware type is: "));
-        SerialUSB.println(myGNSS.getFirmwareType());
-
-        SerialUSB.print(F("The firmware version is: "));
-        SerialUSB.print(myGNSS.getFirmwareVersionHigh());
-        SerialUSB.print(F("."));
-        SerialUSB.println(myGNSS.getFirmwareVersionLow());
-
-        SerialUSB.print(F("The protocol version is: "));
-        SerialUSB.print(myGNSS.getProtocolVersionHigh());
-        SerialUSB.print(F("."));
-        SerialUSB.println(myGNSS.getProtocolVersionLow());
-    }
-
-    initGNSS();
-    initBMP581();
-
-    // Initialize through ABP
-    initThroughABP();
+    SerialUSB.println();
+    SerialUSB.println(F("Starting"));
+    SerialUSB.println();
 }
 
 void fetchGNSSData();
@@ -206,17 +196,152 @@ void fetchBMP581Data();
 // the loop function runs over and over again forever
 void loop()
 {
-    fetchGNSSData();
-    fetchBMP581Data();
+    voltage = readBatt();
 
-    processLMICEvents(); // Process the LMIC event queue
-    updateTelemetry();
-    sendLoRaWANPacket();
+    if (((voltage > battMin) && gpsFix) || ((voltage > gpsMinVolt) && !gpsFix)) {
+        if (!HardwareSetup) {
+            SerialUSB.println(F("GPS and BMP setup"));
+            setup_GPS_BMP();
+            SerialUSB.println(F("Searching for GPS fix..."));
+            HardwareSetup = true;
+        }
 
-    digitalWrite(LED_BUILTIN, HIGH); // turn the LED on (HIGH is the voltage level)
-    delay(1000);                     // wait for a second
-    digitalWrite(LED_BUILTIN, LOW);  // turn the LED off by making the voltage LOW
-    delay(1000);                     // wait for a second
+        if(gpsFix) {
+            // Let LMIC handle LoRaWAN background tasks
+            os_runstep(); 
+        }
+    
+        if ((!packetQueued && (millis() - last_packet > TX_INTERVAL && !(LMIC.opmode & OP_TXRXPEND)) || !gpsFix)) {
+            GpsON;
+            SerialUSB.println(F("GPS ON"));
+            delay(500);
+
+            if(!ublox_high_alt_mode_enabled) {
+                setupUBloxDynamicModel();
+            }
+
+            if (ignoreFix || myGNSS.getPVT() && (myGNSS.getFixType() != 0) && (myGNSS.getSIV() > 3)) {
+                gpsFix = true;
+
+                checkRegionByLocation();
+
+                if(lastLoRaWANRegion != Lorawan_Geofence_region_code) {
+                    SerialUSB.println(F("Region has changed, force LoRaWAN ABP Init")); 
+                    ABPInitStatus = false;
+                    lastLoRaWANRegion = Lorawan_Geofence_region_code;
+                }
+          
+                if(!ABPInitStatus && (Lorawan_Geofence_no_tx == 0)){            
+                    SerialUSB.println(F("LoRaWAN ABP initiated..."));     
+                    initThroughABP();
+                    SerialUSB.println(F("LoRaWAN ABP Initialize success..."));     
+                    ABPInitStatus = true;
+                }
+
+
+                updateTelemetry();
+                #if defined(DEVMODE)        
+                SerialUSB.print(F("Telemetry Size: "));
+                SerialUSB.print(telemetry.getSize());
+                SerialUSB.println(F(" bytes"));
+                #endif
+
+                //need to save power
+                if (readBatt() < gpsMinVolt) {
+                    GpsOFF;
+                    ublox_high_alt_mode_enabled = false; //gps sleep mode resets high altitude mode.
+                    delay(500);      
+                }
+
+                if (Lorawan_Geofence_no_tx == 0) {
+                    sendLoRaWANPacket();
+                    SerialUSB.println(F("LoRaWAN packet sent.."));  
+
+                    // flash three times to send out signal
+                    for (int i = 1; i <= 3; i++) {
+                        digitalWrite(LED_BUILTIN, HIGH); // turn the LED on (HIGH is the voltage level)
+                        delay(300);                     // wait for a second
+                        digitalWrite(LED_BUILTIN, LOW);  // turn the LED off by making the voltage LOW
+                        delay(300);                     // wait for a second
+                    }
+                }   
+                // // add delay before launch by Sean Lin
+                // delay(55000);
+            } else {
+                SerialUSB.println(F("No GPS fix yet..."));
+                fetchGNSSData();
+                fetchBMP581Data();
+                fetchBatteryVoltage();
+
+                // flash twice to show no gps is fixed yet
+                for (int i = 1; i <= 2; i++) {
+                    digitalWrite(LED_BUILTIN, HIGH); // turn the LED on (HIGH is the voltage level)
+                    delay(500);                     // wait for 0.5 second
+                    digitalWrite(LED_BUILTIN, LOW);  // turn the LED off by making the voltage LOW
+                    delay(500);                     // wait for 0.5 second
+                }
+            }
+        }
+        //this code block protecting serial connected (3V + 3V) super caps from overcharging by powering on GPS module.
+        //GPS module uses too much power while on, so if voltage is too high for supercaps, GPS ON.
+        if (readBatt() > 6.5) {
+            GpsON;
+            delay(500);
+        }
+    } else {
+        GpsOFF;
+        ublox_high_alt_mode_enabled = false; //gps sleep mode resets high altitude mode.     
+        gpsFix=false;
+
+        #if defined(DEVMODE)
+        SerialUSB.print("GPS off, supply voltage= ");
+        SerialUSB.print(voltage);
+        SerialUSB.print(" V\t\t");
+        SerialUSB.println();  // adds a newline after the prints
+        #endif
+
+        // flash LED once to show that it is in sleep mode
+        digitalWrite(LED_BUILTIN, HIGH); // turn the LED on (HIGH is the voltage level)
+        delay(500);                      // wait for 0.5 second
+        digitalWrite(LED_BUILTIN, LOW);  // turn the LED off by making the voltage LOW
+        delay(500);                      // wait for 0.5 second
+
+        delay(battWait * 1000);
+    }
+    delay(1000);
+}
+
+void setup_GPS_BMP() {
+    GpsON;
+    delay(500);
+    
+    Wire.begin();
+
+    if (myGNSS.begin() == false) //Connect to the Ublox module using Wire port
+    {
+        SerialUSB.println(F("Ublox GPS not detected at default I2C address. Please check wiring. Freezing."));
+        while (1)
+        ;
+    }
+
+    // do not overload the buffer system from the GPS, disable UART output
+    myGNSS.setUART1Output(0); //Disable the UART1 port output 
+    myGNSS.setUART2Output(0); //Disable Set the UART2 port output
+    myGNSS.setI2COutput(COM_TYPE_UBX); //Set the I2C port to output UBX only (turn off NMEA noise)
+
+    //myGNSS.enableDebugging(); //Enable debug messages over Serial (default)
+
+    myGNSS.setNavigationFrequency(2);//Set output to 2 times a second. Max is 10
+    byte rate = myGNSS.getNavigationFrequency(); //Get the update rate of this module
+    SerialUSB.print("Current update rate for GPS: ");
+    SerialUSB.println(rate);
+
+    myGNSS.enableGNSS(false, SFE_UBLOX_GNSS_ID_BEIDOU); // Disable BeiDou
+    myGNSS.enableGNSS(true, SFE_UBLOX_GNSS_ID_GLONASS); // Enable GLONASS
+
+    myGNSS.saveConfiguration(); //Save the current settings to flash and BBR
+
+    initBMP581();
 }
 
 void setupUBloxDynamicModel()
@@ -231,27 +356,12 @@ void setupUBloxDynamicModel()
     }
     else
     {
+        ublox_high_alt_mode_enabled = true;
+        #if defined(DEVMODE)
         SerialUSB.print(F("Dynamic platform model changed successfully! : "));
         SerialUSB.println(myGNSS.getDynamicModel());
+        #endif
     }
-}
-
-void initGNSS()
-{
-    myGNSS.setI2COutput(COM_TYPE_UBX); // Set the I2C port to output UBX only (turn off NMEA noise)
-
-    myGNSS.setNavigationFrequency(2);            // Set output to 2 times a second. Max is 10
-    byte rate = myGNSS.getNavigationFrequency(); // Get the update rate of this module
-    SerialUSB.print("Current update rate for GPS: ");
-    SerialUSB.println(rate);
-
-    myGNSS.enableGNSS(false, SFE_UBLOX_GNSS_ID_BEIDOU); // Disable BeiDou
-    myGNSS.enableGNSS(true, SFE_UBLOX_GNSS_ID_GLONASS); // Enable GLONASS
-
-
-    // myGNSS.saveConfiguration(); // Save the current settings to flash and BBR
-
-    setupUBloxDynamicModel();
 }
 
 void initBMP581()
@@ -356,6 +466,14 @@ void fetchBMP581Data()
         SerialUSB.print("Error getting data from sensor! Error code: ");
         SerialUSB.println(err);
     }
+}
+
+void fetchBatteryVoltage()
+{
+    voltage = readBatt();
+    SerialUSB.print("Battery voltage: ");
+    SerialUSB.print(voltage);
+    SerialUSB.println(" V");
 }
 
 float readBatt()

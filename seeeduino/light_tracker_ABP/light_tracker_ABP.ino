@@ -82,6 +82,8 @@ int *indices;                            // do not change this.
 bool sentenceSent = false;               // do not change this.
 int letter_index_in_random_sequence = 0; // do not change this.
 
+#define ENABLE_RANDOM_LETTER_SENDING true  // true to enable random letter sending, false to disable
+
 // The LoRaWAN region to use, automatically selected based on your location. So GPS fix is necesarry
 u1_t os_getRegion (void) { return Lorawan_Geofence_region_code; } //do not change this
 
@@ -565,37 +567,42 @@ void updateTelemetry()
     telemetry.addBarometricPressure(7, data.pressure / 100.f);                                                 // pressure
     telemetry.addAnalogInput(8, tempAltitudeShort);                                                             // kilometers or miles
     
-    // random letter sequence
-    if (!sentenceSent) {
-        for (int i = 0; i < sentence_length; i++) {
-            indices[i] = i;
+    if (ENABLE_RANDOM_LETTER_SENDING) {
+        // random letter sequence
+        if (!sentenceSent) {
+            for (int i = 0; i < sentence_length; i++) {
+                indices[i] = i;
+            }
+        shuffleIndices(indices, sentence_length);
+        sentenceSent = true;
+        letter_index_in_random_sequence = 0;
+        SerialUSB.println("New random sequence generated");
         }
-    shuffleIndices(indices, sentence_length);
-    sentenceSent = true;
-    letter_index_in_random_sequence = 0;
-    SerialUSB.println("New random sequence generated");
+
+        // send the next letter in the random sequence
+        if (letter_index_in_random_sequence < sentence_length) {
+            int char_index_random = indices[letter_index_in_random_sequence];
+            char letter_to_send  = my_sentence.charAt(char_index_random);
+
+            telemetry.addDigitalInput(9, char_index_random);
+            telemetry.addDigitalInput(10, letter_to_send);
+
+            SerialUSB.print("Char index in sentence: ");
+            SerialUSB.println(char_index_random);
+            SerialUSB.print("Sending letter: ");
+            SerialUSB.println(letter_to_send);
+            SerialUSB.print("Index in random sequence: ");
+            SerialUSB.println(letter_index_in_random_sequence);
+
+            letter_index_in_random_sequence++;
+        } else {
+            telemetry.addDigitalInput(9, 0xFF);
+            telemetry.addDigitalInput(10, 0xFF);
+
+            sentenceSent = false;
+            SerialUSB.println("All letters sent");
+        }
     }
-
-    // send the next letter in the random sequence
-    if (letter_index_in_random_sequence < sentence_length) {
-        int char_index_random = indices[letter_index_in_random_sequence];
-        char letter_to_send  = my_sentence.charAt(char_index_random);
-
-        telemetry.addDigitalInput(9, sentence_length);
-        telemetry.addDigitalInput(10, char_index_random);
-        telemetry.addDigitalInput(11, letter_to_send);
-
-        SerialUSB.print("Sending letter: ");
-        SerialUSB.println(letter_to_send);
-        SerialUSB.print("Index in random sequence: ");
-        SerialUSB.println(letter_index_in_random_sequence);
-
-        letter_index_in_random_sequence++;
-    } else {
-        sentenceSent = false;
-        SerialUSB.println("All letters sent");
-    }
-
 }
 
 // Fisher-Yates shuffle algorithm

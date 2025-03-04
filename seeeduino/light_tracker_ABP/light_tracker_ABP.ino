@@ -70,10 +70,17 @@ boolean ABPInitStatus = false; // do not change this.
 uint8_t measurementSystem = 0; // 0 for metric (meters, km, Celcius, etc.), 1 for imperial (feet, mile, Fahrenheit,etc.)
 
 //************************** LoRaWAN Settings ********************
-const unsigned TX_INTERVAL = 60000;  // Schedule TX every this many miliseconds (might become longer due to duty cycle limitations).
+const unsigned TX_INTERVAL = 10000;  // Schedule TX every this many miliseconds (might become longer due to duty cycle limitations).
 
 // try to keep telemetry size smaller than 51 bytes if possible. Default telemetry size is 37 bytes.
-CayenneLPP telemetry(37);
+CayenneLPP telemetry(51);
+
+// string to send
+String my_sentence = "hello from yuzhou";
+uint8_t sentence_length = 0;             // do not change this.
+int *indices;                            // do not change this.
+bool sentenceSent = false;               // do not change this.
+int letter_index_in_random_sequence = 0; // do not change this.
 
 // The LoRaWAN region to use, automatically selected based on your location. So GPS fix is necesarry
 u1_t os_getRegion (void) { return Lorawan_Geofence_region_code; } //do not change this
@@ -172,6 +179,7 @@ void setup()
     GpsOFF;
     
     SerialUSB.begin(115200, SERIAL_8N1);
+    Serial.begin(115200);
 
     // Initialize the LED pin
     pinMode(LED_BUILTIN, OUTPUT);
@@ -188,6 +196,20 @@ void setup()
     SerialUSB.println();
     SerialUSB.println(F("Starting"));
     SerialUSB.println();
+
+    Serial.println();
+    Serial.println(F("Starting"));
+    Serial.println();
+
+    sentence_length = my_sentence.length();
+    indices = new int[sentence_length];
+
+    randomSeed(analogRead(0)); // Seed the random number generator
+
+    SerialUSB.print("Sentence: ");
+    SerialUSB.println(my_sentence);
+    SerialUSB.print("Sentence length: ");
+    SerialUSB.println(sentence_length);
 }
 
 void fetchGNSSData();
@@ -244,12 +266,17 @@ void loop()
                 SerialUSB.print(F("Telemetry Size: "));
                 SerialUSB.print(telemetry.getSize());
                 SerialUSB.println(F(" bytes"));
+
+                Serial.print(F("Telemetry Size: "));
+                Serial.print(telemetry.getSize());
+                Serial.println(F(" bytes"));
                 #endif
 
                 //need to save power
                 if (readBatt() < gpsMinVolt) {
                     GpsOFF;
                     ublox_high_alt_mode_enabled = false; //gps sleep mode resets high altitude mode.
+                    gpsFix = false;
                     delay(500);      
                 }
 
@@ -537,12 +564,59 @@ void updateTelemetry()
     telemetry.addDigitalInput(6, myGNSS.getHeading() / 100000);                                                  // course in degrees
     telemetry.addBarometricPressure(7, data.pressure / 100.f);                                                 // pressure
     telemetry.addAnalogInput(8, tempAltitudeShort);                                                             // kilometers or miles
+    
+    // random letter sequence
+    if (!sentenceSent) {
+        for (int i = 0; i < sentence_length; i++) {
+            indices[i] = i;
+        }
+    shuffleIndices(indices, sentence_length);
+    sentenceSent = true;
+    letter_index_in_random_sequence = 0;
+    SerialUSB.println("New random sequence generated");
+    }
+
+    // send the next letter in the random sequence
+    if (letter_index_in_random_sequence < sentence_length) {
+        int char_index_random = indices[letter_index_in_random_sequence];
+        char letter_to_send  = my_sentence.charAt(char_index_random);
+
+        telemetry.addDigitalInput(9, sentence_length);
+        telemetry.addDigitalInput(10, char_index_random);
+        telemetry.addDigitalInput(11, letter_to_send);
+
+        SerialUSB.print("Sending letter: ");
+        SerialUSB.println(letter_to_send);
+        SerialUSB.print("Index in random sequence: ");
+        SerialUSB.println(letter_index_in_random_sequence);
+
+        letter_index_in_random_sequence++;
+    } else {
+        sentenceSent = false;
+        SerialUSB.println("All letters sent");
+    }
+
 }
+
+// Fisher-Yates shuffle algorithm
+void shuffleIndices(int arr[], int n) {
+    for (int i = n - 1; i > 0; i--) {
+      int j = random(i + 1); // generate a random number [0, i]
+      int temp = arr[i];
+      arr[i] = arr[j];
+      arr[j] = temp;
+    }
+  }
 
 void checkRegionByLocation() {
 #ifdef DEVMODE
-    float tempLat = 37.315000;
-    float tempLong = -122.031200;
+    // us915_0
+    // float tempLat = 37.315000;
+    // float tempLong = -122.031200;
+
+    // eu868
+    float tempLat = 0;
+    float tempLong = 51.5;
 #else
     float tempLat = myGNSS.getLatitude() / 10000000.f;
     float tempLong = myGNSS.getLongitude() / 10000000.f;
@@ -835,6 +909,15 @@ void sendLoRaWANPacket()
     if (channelNoFor2ndSubBand > 7)
     {
         channelNoFor2ndSubBand = 0;
+    }
+
+    if (Lorawan_Geofence_region_code == _REGCODE_EU868) {
+        //DR5 (SF7 BW125kHz) max payload size is 222 bytes.
+        LMIC_setDrTxpow(5,KEEP_TXPOWADJ);
+
+        //Channel 0, 868.1 MHz
+        channelNoFor2ndSubBand = 0;
+        LMIC_selectChannel(channelNoFor2ndSubBand);
     }
 
     SerialUSB.print(F("Channel: "));
